@@ -5,6 +5,11 @@ import { runOpenLoop } from "./core/open-loop.mjs";
 import { certifyDataset, preloadDataset } from "./core/dataset.mjs";
 import { doctor } from "./core/doctor.mjs";
 import fs from "node:fs";
+import path from "node:path";
+import { readCapacityPlan, runCapacityPlan } from "./core/capacity.mjs";
+import { createCapacityProvider } from "./capacity/providers.mjs";
+import { generateReport } from "./report/html.mjs";
+import { generatePackage } from "./report/package.mjs";
 
 function args() {
   const values = { command: process.argv[2] };
@@ -16,8 +21,9 @@ function args() {
 }
 
 const options = args();
-if (!options.config) throw new Error("--config is required");
-const loaded = readConfig(options.config);
+const configCommands = ["validate", "doctor", "run", "preload", "certify", "phase1"];
+if (configCommands.includes(options.command) && !options.config) throw new Error("--config is required");
+const loaded = options.config ? readConfig(options.config) : null;
 if (options.command === "validate") {
   process.stdout.write(`${JSON.stringify({ valid: true, name: loaded.config.name, model: loaded.config.load.model, scheduledOperations: loaded.config.load.model === "open-loop" ? scheduledOperationCount(loaded.config) : null, sha256: loaded.sha256 }, null, 2)}\n`);
 } else if (options.command === "doctor") {
@@ -40,4 +46,40 @@ if (options.command === "validate") {
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
     if (summary.passed === false) process.exitCode = 2;
   } finally { await provider.close(); }
-} else throw new Error("command must be validate, doctor, run, preload, or certify");
+} else if (options.command === "capacity") {
+  if (!options.plan || !options.target || !options.table || !options.output || !options["start-at"]) throw new Error("capacity requires --plan, --target, --table, --output, and --start-at");
+  const plan = readCapacityPlan(options.plan);
+  const provider = createCapacityProvider({ target: options.target, table: options.table, endpoint: options.endpoint });
+  try {
+    const report = await runCapacityPlan({ plan, target: options.target, table: options.table, startAt: options["start-at"], output: options.output, provider, dryRun: options["dry-run"] === "true" });
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    if (report.passed === false) process.exitCode = 2;
+  } finally { await provider.close(); }
+} else if (options.command === "phase1") {
+  if (!options.plan || !options.target || !options.table || !options.output || !options["start-at"]) throw new Error("phase1 requires --config, --plan, --target, --table, --output, and --start-at");
+  const plan = readCapacityPlan(options.plan);
+  const workloadProvider = await createProvider({ config: loaded.config, target: options.target, table: options.table, endpoint: options.endpoint });
+  const capacityProvider = createCapacityProvider({ target: options.target, table: options.table, endpoint: options.endpoint });
+  try {
+    await runCapacityPlan({ plan, target: options.target, table: options.table, startAt: options["start-at"], provider: capacityProvider, dryRun: true });
+    const [workloadResult, capacityResult] = await Promise.allSettled([
+      runOpenLoop({ config: loaded.config, configSha256: loaded.sha256, provider: workloadProvider, target: options.target, table: options.table, output: path.join(options.output, "workload"), startAt: options["start-at"] }),
+      runCapacityPlan({ plan, target: options.target, table: options.table, startAt: options["start-at"], output: path.join(options.output, "capacity-events.json"), provider: capacityProvider }),
+    ]);
+    if (capacityResult.status === "rejected") throw capacityResult.reason;
+    if (workloadResult.status === "rejected") throw workloadResult.reason;
+    const summary = workloadResult.value, capacity = capacityResult.value;
+    process.stdout.write(`${JSON.stringify({ summary, capacity }, null, 2)}\n`);
+    if (capacity.passed === false) process.exitCode = 2;
+  } finally {
+    await Promise.all([workloadProvider.close(), capacityProvider.close()]);
+  }
+} else if (options.command === "report") {
+  if (!options.suite || !options.output) throw new Error("report requires --suite and --output");
+  const report = generateReport({ suite: options.suite, output: options.output });
+  process.stdout.write(`${JSON.stringify({ output: path.resolve(options.output), sessions: report.sessions.length, groups: report.groups.length }, null, 2)}\n`);
+} else if (options.command === "package") {
+  if (!options.suite || !options.output) throw new Error("package requires --suite and --output");
+  const manifest = generatePackage({ suite: options.suite, output: options.output });
+  process.stdout.write(`${JSON.stringify({ output: path.resolve(options.output), fileCount: manifest.fileCount }, null, 2)}\n`);
+} else throw new Error("command must be validate, doctor, run, preload, certify, capacity, phase1, report, or package");

@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "title": "KVS Benchmark — Ashburn / us-east-1",
+  "benchmarkId": "replace-with-run-id",
+  "scope": { "awsRegion": "us-east-1", "ociRegion": "us-ashburn-1", "multiRegion": false, "databaseSessions": 4 },
+  "acceptance": { "maxStartSkewMs": 250 },
+  "datasetCertificates": ["../results/audit/aws/dataset-certificate.json", "../results/audit/adb/dataset-certificate.json", "../results/audit/ndcs/dataset-certificate.json"],
+  "pricing": {
+    "currency": "USD",
+    "licenseModel": "BYOL",
+    "basis": "Public list price; database services only; populate all values from retained price-source evidence before final delivery.",
+    "products": {
+      "aws": { "skuBasis": "Provisioned RCU/WCU plus table storage", "monthlyReferenceUsd": null, "benchmarkWindowCostUsd": null, "sourceUrl": "https://aws.amazon.com/dynamodb/pricing/provisioned/" },
+      "adb": { "skuBasis": "Autonomous Transaction Processing ECPU BYOL plus storage", "monthlyReferenceUsd": null, "benchmarkWindowCostUsd": null, "sourceUrl": "https://www.oracle.com/cloud/price-list/" },
+      "ndcs": { "skuBasis": "Provisioned read/write units plus storage", "monthlyReferenceUsd": null, "benchmarkWindowCostUsd": null, "sourceUrl": "https://www.oracle.com/cloud/price-list/" }
+    }
+  },
+  "references": {
+    "awsBurstAdaptiveCapacity": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/burst-adaptive-capacity.html",
+    "adbDynamoDbApiBilling": "https://docs.oracle.com/en/cloud/paas/autonomous-database/serverless/adbsb/autonomous-features-billing.html",
+    "ociNoSqlPlanning": "https://docs.oracle.com/en/cloud/paas/nosql-cloud/dtddt/plan-your-service.html"
+  },
+  "sessions": [
+    { "id": "phase0-r1", "phase": "phase0", "consistency": "strong", "repetition": "r1", "targets": { "aws": "../results/phase0/strong/r1/aws", "adb": "../results/phase0/strong/r1/adb", "ndcs": "../results/phase0/strong/r1/ndcs" } },
+    { "id": "phase0-r2", "phase": "phase0", "consistency": "strong", "repetition": "r2", "targets": { "aws": "../results/phase0/strong/r2/aws", "adb": "../results/phase0/strong/r2/adb", "ndcs": "../results/phase0/strong/r2/ndcs" } },
+    { "id": "phase1-r1", "phase": "phase1", "consistency": "strong", "repetition": "r1", "targets": { "aws": { "run": "../results/phase1/strong/r1/aws/workload", "capacityEvents": "../results/phase1/strong/r1/aws/capacity-events.json" }, "adb": { "run": "../results/phase1/strong/r1/adb/workload", "capacityEvents": "../results/phase1/strong/r1/adb/capacity-events.json" }, "ndcs": { "run": "../results/phase1/strong/r1/ndcs/workload", "capacityEvents": "../results/phase1/strong/r1/ndcs/capacity-events.json" } } },
+    { "id": "phase1-r2", "phase": "phase1", "consistency": "strong", "repetition": "r2", "targets": { "aws": { "run": "../results/phase1/strong/r2/aws/workload", "capacityEvents": "../results/phase1/strong/r2/aws/capacity-events.json" }, "adb": { "run": "../results/phase1/strong/r2/adb/workload", "capacityEvents": "../results/phase1/strong/r2/adb/capacity-events.json" }, "ndcs": { "run": "../results/phase1/strong/r2/ndcs/workload", "capacityEvents": "../results/phase1/strong/r2/ndcs/capacity-events.json" } } }
+  ]
+}

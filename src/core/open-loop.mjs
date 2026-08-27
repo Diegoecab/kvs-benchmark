@@ -16,6 +16,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   const operations = buildOperationStream(config);
   const requestedStart = startAt ? Date.parse(startAt) : Date.now() + 2000;
   if (!Number.isFinite(requestedStart)) throw new Error("invalid --start-at");
+  if (startAt && requestedStart < Date.now()) throw new Error("--start-at must be in the future");
   const startPerf = performance.now() + Math.max(0, requestedStart - Date.now());
   const inFlight = new Set();
   const successfulService = [], successfulIntended = [], failedService = [], queueDelays = [], concurrency = [];
@@ -32,6 +33,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   }, config.load.telemetryIntervalMs);
 
   if (requestedStart > Date.now()) await sleep(requestedStart - Date.now());
+  const actualStartEpochMs = Date.now();
   for (const operation of operations) {
     const scheduledPerf = startPerf + operation.offsetMs;
     const delay = scheduledPerf - performance.now();
@@ -74,7 +76,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   const elapsedSeconds = config.load.schedule.reduce((sum, step) => sum + step.seconds, 0);
   const summary = {
     schemaVersion: 1, generatedAt: new Date().toISOString(), configName: config.name, configSha256, target, table, consistency: config.workload.consistency,
-    startAt: new Date(requestedStart).toISOString(), scheduled: operations.length, completed, completionRate: operations.length ? completed / operations.length : 0,
+    startAt: new Date(requestedStart).toISOString(), actualStartAt: new Date(actualStartEpochMs).toISOString(), startSkewMs: actualStartEpochMs - requestedStart, durationSeconds: elapsedSeconds, scheduled: operations.length, completed, completionRate: operations.length ? completed / operations.length : 0,
     achievedOperationsPerSecond: elapsedSeconds ? completed / elapsedSeconds : 0, errors, schedulerDrops, retries,
     successfulServiceLatencyMs: distribution(successfulService), successfulIntendedLatencyMs: distribution(successfulIntended), failedServiceLatencyMs: distribution(failedService), queueDelayMs: distribution(queueDelays),
     concurrency: { configuredMaxInflight: config.load.maxInflight, observedAtOperationStart: { ...distribution(concurrency), max: peakInflight } },

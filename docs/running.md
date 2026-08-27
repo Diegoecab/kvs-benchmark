@@ -58,3 +58,17 @@ docker run --rm --network host -e AWS_REGION ghcr.io/diegoecab/kvs-benchmark-run
 ```
 
 See [container.md](container.md) and the scripts under `scripts/container/` for equivalent AWS, ADB API, and OCI NoSQL commands.
+
+## Phase 1
+
+Use `run-phase1-aws.sh`, `run-phase1-adb.sh`, and `run-phase1-oci.sh` with one shared `START_AT`. The command performs an exact-capacity read-only preflight and then runs workload plus capacity transitions together. See [phase1.md](phase1.md).
+
+## Final deliverable
+
+Describe accepted sessions using `configs/report-suite.example.json`, then run:
+
+```bash
+node src/cli.mjs package --suite=results/suite.json --output=benchmark-package
+```
+
+See [reporting.md](reporting.md) for package contents and acceptance checks.

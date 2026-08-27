@@ -10,11 +10,13 @@ The harness defines its own versioned methodology for deterministic open-loop sc
 
 ## Status
 
-`v0.1` provides the sanitized benchmark foundation: validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop execution, concurrency/client-health telemetry, and offline tests. Capacity controllers, cloud provisioning, HTML reporting, and a closed-loop runner are tracked in the roadmap.
+`v0.1` provides validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop execution, synchronized Phase 1 capacity transitions, concurrency/client-health telemetry, HTML evidence packaging, and offline tests. Cloud provisioning and a closed-loop runner are tracked in the roadmap.
 
 The harness also loads and certifies the canonical dataset in pre-existing, dedicated benchmark tables. It does not provision cloud infrastructure or create tables.
 
 ## Quick start
+
+For the complete cloud sequence, use the [one-page quick start](docs/quickstart.md).
 
 ```bash
 npm ci
@@ -54,6 +56,18 @@ AWS and OCI runners use the same `linux/amd64` container image and immutable dig
 ```bash
 docker run --rm ghcr.io/diegoecab/kvs-benchmark-runner:main doctor --config=configs/smoke.json --target=mock --skip-network=true
 ```
+
+## Phase 1 and deliverable
+
+The explicit `phase1` command runs the workload and T+3/T+8 capacity controller against an existing dedicated table. It validates the active baseline first, and the final event must restore it. See [Phase 1](docs/phase1.md).
+
+After accepted sessions are collected, generate the portable English HTML report and checksummed evidence package:
+
+```bash
+node src/cli.mjs package --suite=results/suite.json --output=benchmark-package
+```
+
+See [reporting](docs/reporting.md) and `configs/report-suite.example.json`.
 
 ## Security
 

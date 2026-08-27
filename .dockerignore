@@ -2,6 +2,7 @@
 .github
 node_modules
 results
+benchmark-package*
 *.ndjson
 *.log
 *.zip
@@ -9,4 +10,3 @@ results
 .secrets
 terraform.tfstate*
 wallet
-

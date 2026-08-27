@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "phase1-x4-eventual-capacity",
+  "durationSeconds": 900,
+  "maxRequestSkewMs": 250,
+  "minimumLeadTimeSeconds": 30,
+  "targets": {
+    "aws": { "baseline": { "read": 200, "write": 400 }, "events": [{ "name": "scale-down", "atSecond": 180, "capacity": { "read": 100, "write": 200 } }, { "name": "scale-up", "atSecond": 480, "capacity": { "read": 200, "write": 400 } }] },
+    "adb": { "baseline": { "read": 200, "write": 400 }, "events": [{ "name": "scale-down", "atSecond": 180, "capacity": { "read": 100, "write": 200 } }, { "name": "scale-up", "atSecond": 480, "capacity": { "read": 200, "write": 400 } }] },
+    "ndcs": { "baseline": { "read": 400, "write": 800, "storageGB": 10 }, "events": [{ "name": "scale-down", "atSecond": 180, "capacity": { "read": 200, "write": 400, "storageGB": 10 } }, { "name": "scale-up", "atSecond": 480, "capacity": { "read": 400, "write": 800, "storageGB": 10 } }] }
+  }
+}

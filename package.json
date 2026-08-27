@@ -7,6 +7,8 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "benchmark": "node src/cli.mjs run",
+    "report": "node src/cli.mjs report",
+    "package:benchmark": "node src/cli.mjs package",
     "validate": "node src/cli.mjs validate",
     "test": "node --test",
     "secrets:check": "node scripts/check-secrets.mjs",
