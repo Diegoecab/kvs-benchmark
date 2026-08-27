@@ -36,6 +36,8 @@ Every accepted comparison must use the same:
 
 See [methodology](docs/methodology.md), [fairness rules](docs/fairness.md), and [contributing](CONTRIBUTING.md).
 
+Strong and eventual consistency are separate checked-in profiles. They use the same deterministic operation schedule but are reported independently.
+
 ## Security
 
 Do not commit cloud credentials, wallets, private keys, raw customer evidence, account identifiers, OCIDs, IP addresses, or Terraform state. See [SECURITY.md](SECURITY.md).

@@ -73,7 +73,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   await Promise.all([new Promise(resolve => operationsOutput.on("finish", resolve)), new Promise(resolve => telemetryOutput.on("finish", resolve))]);
   const elapsedSeconds = config.load.schedule.reduce((sum, step) => sum + step.seconds, 0);
   const summary = {
-    schemaVersion: 1, generatedAt: new Date().toISOString(), configName: config.name, configSha256, target, table,
+    schemaVersion: 1, generatedAt: new Date().toISOString(), configName: config.name, configSha256, target, table, consistency: config.workload.consistency,
     startAt: new Date(requestedStart).toISOString(), scheduled: operations.length, completed, completionRate: operations.length ? completed / operations.length : 0,
     achievedOperationsPerSecond: elapsedSeconds ? completed / elapsedSeconds : 0, errors, schedulerDrops, retries,
     successfulServiceLatencyMs: distribution(successfulService), successfulIntendedLatencyMs: distribution(successfulIntended), failedServiceLatencyMs: distribution(failedService), queueDelayMs: distribution(queueDelays),

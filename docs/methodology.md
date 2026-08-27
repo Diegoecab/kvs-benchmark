@@ -6,6 +6,12 @@ The scored benchmark is deterministic and open-loop. It asks: **what happens whe
 
 The primary workload is 100% point reads over a canonical `pk`/`sk`/`version`/`payload` record so that correctness and capacity-unit boundaries remain explicit.
 
+## Read consistency
+
+Consistency is an explicit workload dimension, never an implicit provider default. Every run declares either `strong` or `eventual`, and results from different consistency modes are not pooled.
+
+For the 900-byte canonical item, capacity-normalized eventual profiles reserve half the read units used by the corresponding strong profile while preserving the same effective point-read envelope. The harness verifies consumed units during calibration and records the selected mode in both `run-config.json` and `summary.json`.
+
 ## Concurrency
 
 Threads, offered load, open requests, and network connections are different controls:
