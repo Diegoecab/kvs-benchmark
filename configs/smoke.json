@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "name": "local-smoke",
+  "dataset": { "keyCount": 100, "payloadBytes": 900, "partitionBuckets": 8, "seed": 20260728, "distribution": "uniform" },
+  "workload": { "readPercent": 100, "writePercent": 0, "consistency": "strong" },
+  "load": { "model": "open-loop", "schedule": [{ "seconds": 2, "operationsPerSecond": 10 }], "maxInflight": 32, "telemetryIntervalMs": 100 },
+  "client": { "maxConnections": 16, "requestTimeoutMs": 5000, "connectionTimeoutMs": 3000, "maxAttempts": 1 }
+}
+

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "name": "read-concurrency-sweep",
+  "dataset": { "keyCount": 10000, "payloadBytes": 900, "partitionBuckets": 64, "seed": 20260728, "distribution": "uniform" },
+  "workload": { "readPercent": 100, "writePercent": 0, "consistency": "strong" },
+  "load": { "model": "closed-loop", "concurrencyLevels": [1, 4, 16, 64, 256], "warmupSecondsPerLevel": 30, "measurementSecondsPerLevel": 120 },
+  "client": { "maxConnections": 512, "requestTimeoutMs": 5000, "connectionTimeoutMs": 3000, "maxAttempts": 1 }
+}
+

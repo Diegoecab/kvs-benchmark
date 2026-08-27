@@ -1,0 +1,20 @@
+{
+  "name": "kvs-benchmark",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reproducible KV benchmark for AWS DynamoDB, ADB DynamoDB API, and OCI NoSQL",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "benchmark": "node src/cli.mjs run",
+    "validate": "node src/cli.mjs validate",
+    "test": "node --test",
+    "secrets:check": "node scripts/check-secrets.mjs",
+    "check": "npm run test && npm run secrets:check && npm run validate -- --config=configs/x1-read-open-loop.json && npm run validate -- --config=configs/x4-read-open-loop.json && npm run validate -- --config=configs/concurrency-sweep.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.864.0",
+    "@smithy/node-http-handler": "^4.1.5",
+    "oracle-nosqldb": "^5.4.7"
+  }
+}
