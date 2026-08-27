@@ -12,6 +12,8 @@ The harness defines its own versioned methodology for deterministic open-loop sc
 
 `v0.1` provides the sanitized benchmark foundation: validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop execution, concurrency/client-health telemetry, and offline tests. Capacity controllers, cloud provisioning, HTML reporting, and a closed-loop runner are tracked in the roadmap.
 
+The harness also loads and certifies the canonical dataset in pre-existing, dedicated benchmark tables. It does not provision cloud infrastructure or create tables.
+
 ## Quick start
 
 ```bash
@@ -19,6 +21,13 @@ npm ci
 npm test
 node src/cli.mjs validate --config=configs/x1-read-open-loop.json
 node src/cli.mjs run --config=configs/smoke.json --target=mock --table=local --output=results/mock
+```
+
+Dataset workflow:
+
+```bash
+node src/cli.mjs preload --config=configs/x1-read-open-loop.json --target=mock --table=local --output=results/preload
+node src/cli.mjs certify --config=configs/x1-read-open-loop.json --target=mock --table=local --output=results/audit
 ```
 
 Cloud credentials are never accepted in configuration files. Use the standard SDK environment/profile mechanisms described in [docs/running.md](docs/running.md).

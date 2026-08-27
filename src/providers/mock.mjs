@@ -6,4 +6,3 @@ export async function createMockProvider({ config }) {
     async close() {}
   };
 }
-
