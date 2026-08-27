@@ -16,3 +16,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: docker build --tag kvs-benchmark:test .
+      - run: docker run --rm kvs-benchmark:test doctor --config=configs/smoke.json --target=mock --skip-network=true

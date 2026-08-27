@@ -13,4 +13,6 @@
 - [ ] Acceptance gate and SHA-256 evidence manifest
 - [ ] Interactive HTML report and pricing module
 - [ ] Infrastructure-as-code modules
-- [ ] Non-mutating prerequisite `doctor`
+- [x] Non-mutating prerequisite `doctor` foundation
+- [x] Portable runner container with SBOM and build provenance
+- [ ] Table schema/capacity inspection in `doctor`

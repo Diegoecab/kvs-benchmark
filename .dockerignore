@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+results
+*.ndjson
+*.log
+*.zip
+.env*
+.secrets
+terraform.tfstate*
+wallet
+

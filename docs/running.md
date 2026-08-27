@@ -50,3 +50,11 @@ Choose preload/audit rates below the table's effective capacity. Increasing conc
 5. Schedule all three `run` commands with the same UTC `--start-at`.
 
 A future `doctor` command will automate runtime, credential, connectivity, NTP, schema, capacity, and client-headroom checks without modifying infrastructure.
+
+The first `doctor` version now checks runtime, visible CPU/RAM, required environment, endpoint DNS/TCP connectivity, and image identity. Table schema/capacity inspection and host NTP evidence remain pending. Run it before preload:
+
+```bash
+docker run --rm --network host -e AWS_REGION ghcr.io/diegoecab/kvs-benchmark-runner@sha256:DIGEST doctor --config=configs/x1-read-open-loop.json --target=aws
+```
+
+See [container.md](container.md) and the scripts under `scripts/container/` for equivalent AWS, ADB API, and OCI NoSQL commands.

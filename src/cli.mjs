@@ -3,6 +3,8 @@ import { readConfig, scheduledOperationCount } from "./core/config.mjs";
 import { createProvider } from "./providers/index.mjs";
 import { runOpenLoop } from "./core/open-loop.mjs";
 import { certifyDataset, preloadDataset } from "./core/dataset.mjs";
+import { doctor } from "./core/doctor.mjs";
+import fs from "node:fs";
 
 function args() {
   const values = { command: process.argv[2] };
@@ -18,6 +20,12 @@ if (!options.config) throw new Error("--config is required");
 const loaded = readConfig(options.config);
 if (options.command === "validate") {
   process.stdout.write(`${JSON.stringify({ valid: true, name: loaded.config.name, model: loaded.config.load.model, scheduledOperations: loaded.config.load.model === "open-loop" ? scheduledOperationCount(loaded.config) : null, sha256: loaded.sha256 }, null, 2)}\n`);
+} else if (options.command === "doctor") {
+  if (!options.target) throw new Error("--target is required");
+  const report = await doctor({ config: loaded.config, target: options.target, endpoint: options.endpoint, skipNetwork: options["skip-network"] === "true" });
+  if (options.output) fs.writeFileSync(options.output, `${JSON.stringify(report, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  if (!report.ready) process.exitCode = 2;
 } else if (["run", "preload", "certify"].includes(options.command)) {
   if (!options.target || !options.table || !options.output) throw new Error("--target, --table, and --output are required");
   const executionConfig = options.command === "certify" ? { ...loaded.config, workload: { ...loaded.config.workload, consistency: "strong" } } : loaded.config;
@@ -32,4 +40,4 @@ if (options.command === "validate") {
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
     if (summary.passed === false) process.exitCode = 2;
   } finally { await provider.close(); }
-} else throw new Error("command must be validate, run, preload, or certify");
+} else throw new Error("command must be validate, doctor, run, preload, or certify");

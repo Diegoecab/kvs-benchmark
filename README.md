@@ -47,6 +47,14 @@ See [methodology](docs/methodology.md), [fairness rules](docs/fairness.md), and 
 
 Strong and eventual consistency are separate checked-in profiles. They use the same deterministic operation schedule but are reported independently.
 
+## Portable runner
+
+AWS and OCI runners use the same `linux/amd64` container image and immutable digest. See the [container contract](docs/container.md). The image includes the harness and runtime dependencies, but never credentials or cloud-specific resource identifiers.
+
+```bash
+docker run --rm ghcr.io/diegoecab/kvs-benchmark-runner:main doctor --config=configs/smoke.json --target=mock --skip-network=true
+```
+
 ## Security
 
 Do not commit cloud credentials, wallets, private keys, raw customer evidence, account identifiers, OCIDs, IP addresses, or Terraform state. See [SECURITY.md](SECURITY.md).
