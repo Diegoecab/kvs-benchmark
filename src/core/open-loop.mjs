@@ -83,6 +83,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
     client: { cpuUsageMicros: process.cpuUsage(cpuStart), memoryAtEnd: process.memoryUsage(), eventLoopDelayMs: { mean: fixed(loopDelay.mean / 1e6), p95: fixed(loopDelay.percentile(95) / 1e6), p99: fixed(loopDelay.percentile(99) / 1e6), max: fixed(loopDelay.max / 1e6) } },
     consumedCapacity: { readUnits: fixed(readUnits), writeUnits: fixed(writeUnits) }
   };
+  summary.passed = completed === operations.length && schedulerDrops === 0 && Object.keys(errors).length === 0;
   fs.writeFileSync(path.join(output, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   fs.writeFileSync(path.join(output, "run-config.json"), `${JSON.stringify({ config, configSha256, target, table, endpointConfigured: Boolean(process.env.DDB_ENDPOINT) }, null, 2)}\n`);
   return summary;

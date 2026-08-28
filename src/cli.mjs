@@ -72,7 +72,7 @@ if (options.command === "validate") {
     if (workloadResult.status === "rejected") throw workloadResult.reason;
     const summary = workloadResult.value, capacity = capacityResult.value;
     process.stdout.write(`${JSON.stringify({ summary, capacity }, null, 2)}\n`);
-    if (capacity.passed === false) process.exitCode = 2;
+    if (summary.passed === false || capacity.passed === false) process.exitCode = 2;
   } finally {
     await Promise.all([workloadProvider.close(), capacityProvider.close()]);
   }
