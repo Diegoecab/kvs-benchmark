@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "e2e-3m-read-open-loop",
+  "dataset": { "keyCount": 10000, "payloadBytes": 900, "partitionBuckets": 64, "seed": 20260728, "distribution": "uniform" },
+  "workload": { "readPercent": 100, "writePercent": 0, "consistency": "strong" },
+  "load": {
+    "model": "open-loop",
+    "schedule": [
+      { "seconds": 36, "operationsPerSecond": 25 },
+      { "seconds": 36, "operationsPerSecond": 50 },
+      { "seconds": 36, "operationsPerSecond": 100 },
+      { "seconds": 36, "operationsPerSecond": 150 },
+      { "seconds": 36, "operationsPerSecond": 75 }
+    ],
+    "maxInflight": 2048,
+    "telemetryIntervalMs": 100
+  },
+  "client": { "maxConnections": 512, "requestTimeoutMs": 5000, "connectionTimeoutMs": 3000, "maxAttempts": 1 },
+  "capacity": {
+    "awsDynamodb": { "readCapacityUnits": 100, "writeCapacityUnits": 100 },
+    "adbDynamodbApi": { "readCapacityUnits": 100, "writeCapacityUnits": 100, "mappedTableEcpu": 3 },
+    "ociNosql": { "readUnits": 200, "writeUnits": 200, "storageGb": 10 }
+  }
+}

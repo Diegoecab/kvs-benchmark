@@ -8,7 +8,7 @@ set -eu
 : "${RESULTS_DIR:=$PWD/results/ndcs}"
 : "${START_AT:?Set START_AT to a shared UTC timestamp}"
 : "${CONTAINER_RUNTIME:=docker}"
-case "${CONTAINER_RUNTIME##*/}" in podman) set -- --userns=keep-id ;; *) set -- ;; esac
+case "${CONTAINER_RUNTIME##*/}:$(id -u)" in podman:0) set -- ;; podman:*) set -- --userns=keep-id ;; *) set -- ;; esac
 mkdir -p "$RESULTS_DIR"
 exec "$CONTAINER_RUNTIME" run "$@" --rm --network host \
   -e OCI_USE_INSTANCE_PRINCIPAL=true \

@@ -29,6 +29,8 @@ On each target host, run `doctor`, `preload`, and `certify`. Use the same worklo
 
 Before a 15-minute accepted session, use `configs/rehearsal-read-open-loop.json` for a synchronized 60-second, read-only rehearsal. Its canonical dataset contract is identical to the x1 profile and it never changes capacity.
 
+For a complete but non-official three-minute E2E validation, use `configs/e2e-3m-read-open-loop.json`. Phase 1 pairs it with `configs/phase1-e2e-3m-strong-capacity.json`, scaling down at T+36 seconds and restoring the baseline at T+96 seconds. Keep these results labeled E2E; the accepted benchmark protocol remains 15 minutes.
+
 ## Phase 0: fixed capacity
 
 Choose a UTC T0 at least 30 seconds in the future and use it on all three hosts:

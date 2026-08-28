@@ -5,7 +5,7 @@ set -eu
 : "${AWS_REGION:=us-east-1}"
 : "${RESULTS_DIR:=$PWD/results/doctor/aws}"
 : "${CONTAINER_RUNTIME:=docker}"
-case "${CONTAINER_RUNTIME##*/}" in podman) set -- --userns=keep-id ;; *) set -- ;; esac
+case "${CONTAINER_RUNTIME##*/}:$(id -u)" in podman:0) set -- ;; podman:*) set -- --userns=keep-id ;; *) set -- ;; esac
 mkdir -p "$RESULTS_DIR"
 chronyc tracking > "$RESULTS_DIR/chronyc-tracking.txt"
 exec "$CONTAINER_RUNTIME" run "$@" --rm --network host \

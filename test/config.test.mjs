@@ -13,6 +13,13 @@ test("x4 profile schedules 288,000 operations", () => {
   assert.equal(scheduledOperationCount(config), 288000);
 });
 
+test("three-minute E2E profile preserves all five load levels", () => {
+  const { config } = readConfig(new URL("../configs/e2e-3m-read-open-loop.json", import.meta.url));
+  assert.equal(scheduledOperationCount(config), 14400);
+  assert.deepEqual(config.load.schedule.map(step => step.operationsPerSecond), [25, 50, 100, 150, 75]);
+  assert.equal(config.load.schedule.reduce((sum, step) => sum + step.seconds, 0), 180);
+});
+
 test("eventual profiles preserve the workload and halve normalized read capacity", () => {
   const strong = readConfig(new URL("../configs/x1-read-open-loop.json", import.meta.url)).config;
   const eventual = readConfig(new URL("../configs/x1-read-eventual-open-loop.json", import.meta.url)).config;

@@ -7,7 +7,7 @@ set -eu
 : "${AWS_SECRET_ACCESS_KEY:?Set a short-lived secret key}"
 : "${RESULTS_DIR:=$PWD/results/doctor/adb}"
 : "${CONTAINER_RUNTIME:=docker}"
-case "${CONTAINER_RUNTIME##*/}" in podman) set -- --userns=keep-id ;; *) set -- ;; esac
+case "${CONTAINER_RUNTIME##*/}:$(id -u)" in podman:0) set -- ;; podman:*) set -- --userns=keep-id ;; *) set -- ;; esac
 mkdir -p "$RESULTS_DIR"
 chronyc tracking > "$RESULTS_DIR/chronyc-tracking.txt"
 exec "$CONTAINER_RUNTIME" run "$@" --rm --network host \

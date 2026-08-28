@@ -48,3 +48,12 @@ test("checked-in Phase 1 baselines match their workload profiles", () => {
     assert.deepEqual(capacity.targets.ndcs.baseline, { read: workload.capacity.ociNosql.readUnits, write: workload.capacity.ociNosql.writeUnits, storageGB: workload.capacity.ociNosql.storageGb });
   }
 });
+
+test("three-minute E2E Phase 1 plan is proportional and restores every baseline", () => {
+  const capacity = readCapacityPlan(new URL("../configs/phase1-e2e-3m-strong-capacity.json", import.meta.url));
+  assert.equal(capacity.durationSeconds, 180);
+  for (const target of ["aws", "adb", "ndcs"]) {
+    assert.deepEqual(capacity.targets[target].events.map(event => event.atSecond), [36, 96]);
+    assert.deepEqual(capacity.targets[target].events.at(-1).capacity, capacity.targets[target].baseline);
+  }
+});
