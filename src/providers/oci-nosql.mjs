@@ -1,11 +1,13 @@
 import nosqldb from "oracle-nosqldb";
 const { NoSQLClient, Consistency } = nosqldb;
 
+export const noSqlRetryConfig = maxAttempts => maxAttempts <= 1 ? { handler: null } : { maxRetries: maxAttempts - 1 };
+
 export async function createOciNoSqlProvider({ config, table }) {
   if (!process.env.OCI_COMPARTMENT_ID) throw new Error("OCI_COMPARTMENT_ID is required");
   const payload = "x".repeat(config.dataset.payloadBytes);
   const iam = process.env.OCI_USE_INSTANCE_PRINCIPAL === "true" ? { useInstancePrincipal: true } : { configFile: process.env.OCI_CONFIG_FILE, profileName: process.env.OCI_PROFILE };
-  const client = new NoSQLClient({ region: process.env.OCI_REGION || "us-ashburn-1", compartment: process.env.OCI_COMPARTMENT_ID, timeout: config.client.requestTimeoutMs, consistency: config.workload.consistency === "strong" ? Consistency.ABSOLUTE : Consistency.EVENTUAL, retry: { maxRetries: Math.max(0, config.client.maxAttempts - 1) }, auth: { iam } });
+  const client = new NoSQLClient({ region: process.env.OCI_REGION || "us-ashburn-1", compartment: process.env.OCI_COMPARTMENT_ID, timeout: config.client.requestTimeoutMs, consistency: config.workload.consistency === "strong" ? Consistency.ABSOLUTE : Consistency.EVENTUAL, retry: noSqlRetryConfig(config.client.maxAttempts), auth: { iam } });
   return {
     async read(key) {
       const result = await client.get(table, key, { consistency: config.workload.consistency === "strong" ? Consistency.ABSOLUTE : Consistency.EVENTUAL });

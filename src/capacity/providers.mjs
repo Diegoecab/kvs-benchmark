@@ -48,7 +48,7 @@ export function createCapacityProvider({ target, table, endpoint, timeoutMs = 60
       region: process.env.OCI_REGION || "us-ashburn-1",
       compartment: process.env.OCI_COMPARTMENT_ID,
       timeout: 15_000,
-      retry: { maxRetries: 0 },
+      retry: { handler: null },
       auth: { iam: process.env.OCI_USE_INSTANCE_PRINCIPAL === "true" ? { useInstancePrincipal: true } : { configFile: process.env.OCI_CONFIG_FILE, profileName: process.env.OCI_PROFILE } },
     });
     const inspect = async () => {
