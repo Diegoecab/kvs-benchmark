@@ -28,6 +28,8 @@ Set `OCI_REGION`, `OCI_COMPARTMENT_ID`, and either `OCI_USE_INSTANCE_PRINCIPAL=t
 
 The output directory contains `operations.ndjson`, `telemetry.ndjson`, `summary.json`, and `run-config.json`. Treat raw evidence as potentially sensitive and do not commit it.
 
+Set `workload.readPercent` and `workload.writePercent` to values that total 100. Set `load.executionMode` to `concurrent` for a scheduled offered-load test, or to `sequential` with `load.maxInflight: 1` for exactly one request in flight. The summary records the selected mix, execution mode, scheduled UTC window, actual UTC window, and observed maximum concurrency.
+
 ## Dataset preload and certificate
 
 The table must already exist and be dedicated to the benchmark. Preload writes exactly 10,000 canonical rows by default; it does not create or alter table infrastructure.

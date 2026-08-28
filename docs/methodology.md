@@ -2,9 +2,9 @@
 
 ## Primary comparison
 
-The scored benchmark is deterministic and open-loop. It asks: **what happens when every product receives the same operations at the same intended UTC timestamps?** The scheduler does not wait for one request to complete before offering the next request.
+The scored benchmark is deterministic and open-loop. It asks: **what happens when every product receives the same operations at the same intended UTC timestamps?** In `concurrent` mode, the scheduler does not wait for one request to complete before offering the next request. In `sequential` mode, each operation waits for the previous one and the resulting queue delay remains visible.
 
-The primary workload is 100% point reads over a canonical `pk`/`sk`/`version`/`payload` record so that correctness and capacity-unit boundaries remain explicit.
+The read/write percentage is explicit and deterministic. Each target receives the same operation type, key and intended timestamp sequence over a canonical `pk`/`sk`/`version`/`payload` record, so correctness and capacity-unit boundaries remain explicit.
 
 ## Read consistency
 
@@ -17,6 +17,7 @@ For the 900-byte canonical item, capacity-normalized eventual profiles reserve h
 Threads, offered load, open requests, and network connections are different controls:
 
 - Offered load is specified by the operations-per-second schedule.
+- `executionMode` is either `concurrent` or `sequential`; sequential mode requires `maxInflight: 1`.
 - `maxInflight` is a safety ceiling, never a claimed thread count.
 - Actual in-flight requests are sampled every 100 ms and recorded at every operation start.
 - Connection-pool limits are explicit provider settings.
@@ -45,6 +46,7 @@ Successful and failed-operation latency distributions are reported separately. R
 - queue delay, event-loop delay, CPU, memory and network counters;
 - consumed capacity and provider-side monitoring metrics;
 - dataset certificate, configuration hash, commit SHA and evidence checksums.
+- scheduled and actual UTC start/end timestamps for every target in every repetition.
 
 ## Method ownership
 

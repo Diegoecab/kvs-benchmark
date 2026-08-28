@@ -35,6 +35,15 @@ test("invalid workload mix is rejected", () => {
   assert.throws(() => validateConfig(config), /must equal 100/);
 });
 
+test("execution mode is explicit and sequential mode enforces one in-flight operation", () => {
+  const concurrent = structuredClone(readConfig(new URL("../configs/smoke.json", import.meta.url)).config);
+  assert.equal(concurrent.load.executionMode, "concurrent");
+  const sequential = structuredClone(concurrent); sequential.load.executionMode = "sequential";
+  assert.throws(() => validateConfig(sequential), /maxInflight = 1/);
+  sequential.load.maxInflight = 1;
+  assert.equal(validateConfig(sequential).load.executionMode, "sequential");
+});
+
 test("canonical dataset hash is deterministic and content-sensitive", () => {
   const config = readConfig(new URL("../configs/smoke.json", import.meta.url)).config;
   assert.equal(expectedDatasetSha256(config), expectedDatasetSha256(config));

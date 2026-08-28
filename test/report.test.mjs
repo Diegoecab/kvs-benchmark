@@ -11,7 +11,7 @@ function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-report-")); const t0 = Date.parse("2026-01-01T00:00:00Z"); const targets = {};
   for (const [offset, target] of ["aws", "adb", "ndcs"].entries()) {
     const directory = path.join(root, "source", target, "workload"); fs.mkdirSync(directory, { recursive: true });
-    const summary = { schemaVersion: 1, target, consistency: "strong", configSha256: "fixture-config", startAt: new Date(t0).toISOString(), actualStartAt: new Date(t0).toISOString(), startSkewMs: 0, durationSeconds: 3, scheduled: 3, completed: 2, achievedOperationsPerSecond: 1, schedulerDrops: 0, concurrency: { configuredMaxInflight: 8, observedAtOperationStart: { max: 2 } }, queueDelayMs: { p99: 0.1 }, client: { eventLoopDelayMs: { p99: 0.2 } } };
+    const summary = { schemaVersion: 1, target, consistency: "strong", configSha256: "fixture-config", startAt: new Date(t0).toISOString(), scheduledStartAt: new Date(t0).toISOString(), scheduledEndAt: new Date(t0 + 3000).toISOString(), actualStartAt: new Date(t0).toISOString(), actualEndAt: new Date(t0 + 3005 + offset).toISOString(), actualDurationMs: 3005 + offset, startSkewMs: 0, durationSeconds: 3, scheduled: 3, completed: 2, achievedOperationsPerSecond: 1, schedulerDrops: 0, workload: { readPercent: 100, writePercent: 0, executionMode: "concurrent" }, concurrency: { executionMode: "concurrent", configuredMaxInflight: 8, observedAtOperationStart: { max: 2 } }, queueDelayMs: { p99: 0.1 }, client: { eventLoopDelayMs: { p99: 0.2 } } };
     fs.writeFileSync(path.join(directory, "summary.json"), JSON.stringify(summary));
     const records = [
       { sequence: 0, operation: "read", offeredRate: 1, scheduledEpochMs: t0, endedEpochMs: t0 + 2 + offset, serviceLatencyMs: 2 + offset, intendedLatencyMs: 2 + offset, error: null },
@@ -33,7 +33,7 @@ function fixture() {
 
 test("HTML report is self-contained and exposes interactive provider labels", () => {
   const { root, suiteFile } = fixture(); const output = path.join(root, "report.html"); const data = generateReport({ suite: suiteFile, output }); const html = fs.readFileSync(output, "utf8");
-  assert.equal(data.sessions[0].targets.aws.throttling.affectedSeconds, 1); assert.match(html, /data-series="aws"/); assert.match(html, /Offered load/); assert.match(html, /manifest|Evidence and reproducibility/);
+  assert.equal(data.sessions[0].targets.aws.throttling.affectedSeconds, 1); assert.match(html, /data-series="aws"/); assert.match(html, /Offered load/); assert.match(html, /Exact execution windows \(UTC\)/); assert.match(html, /Scheduled start/); assert.match(html, /manifest|Evidence and reproducibility/);
   assert.doesNotThrow(() => new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]));
 });
 

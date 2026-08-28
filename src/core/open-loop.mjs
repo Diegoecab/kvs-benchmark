@@ -14,6 +14,8 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   const operationsOutput = fs.createWriteStream(path.join(output, "operations.ndjson"), { encoding: "utf8" });
   const telemetryOutput = fs.createWriteStream(path.join(output, "telemetry.ndjson"), { encoding: "utf8" });
   const operations = buildOperationStream(config);
+  const executionMode = config.load.executionMode || "concurrent";
+  const effectiveMaxInflight = executionMode === "sequential" ? 1 : config.load.maxInflight;
   const requestedStart = startAt ? Date.parse(startAt) : Date.now() + 2000;
   if (!Number.isFinite(requestedStart)) throw new Error("invalid --start-at");
   if (startAt && requestedStart < Date.now()) throw new Error("--start-at must be in the future");
@@ -38,11 +40,12 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
     const scheduledPerf = startPerf + operation.offsetMs;
     const delay = scheduledPerf - performance.now();
     if (delay > 0) await sleep(delay);
+    if (executionMode === "sequential" && inFlight.size) await Promise.all(inFlight);
     const actualStartPerf = performance.now();
     const scheduledEpochMs = requestedStart + operation.offsetMs;
     const startedEpochMs = requestedStart + actualStartPerf - startPerf;
     const queueDelayMs = actualStartPerf - scheduledPerf;
-    if (inFlight.size >= config.load.maxInflight) {
+    if (inFlight.size >= effectiveMaxInflight) {
       schedulerDrops += 1;
       errors.ClientSchedulerDrop = (errors.ClientSchedulerDrop || 0) + 1;
       operationsOutput.write(`${JSON.stringify({ ...operation, scheduledEpochMs, startedEpochMs, endedEpochMs: startedEpochMs, queueDelayMs: fixed(queueDelayMs), serviceLatencyMs: 0, intendedLatencyMs: fixed(queueDelayMs), inFlightAtStart: inFlight.size, error: { name: "ClientSchedulerDrop" } })}\n`);
@@ -69,6 +72,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
     task.finally(() => inFlight.delete(task));
   }
   await Promise.all(inFlight);
+  const actualEndEpochMs = Date.now();
   clearInterval(telemetryTimer);
   loopDelay.disable();
   operationsOutput.end(); telemetryOutput.end();
@@ -76,14 +80,17 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   const elapsedSeconds = config.load.schedule.reduce((sum, step) => sum + step.seconds, 0);
   const summary = {
     schemaVersion: 1, generatedAt: new Date().toISOString(), configName: config.name, configSha256, target, table, consistency: config.workload.consistency,
-    startAt: new Date(requestedStart).toISOString(), actualStartAt: new Date(actualStartEpochMs).toISOString(), startSkewMs: actualStartEpochMs - requestedStart, durationSeconds: elapsedSeconds, scheduled: operations.length, completed, completionRate: operations.length ? completed / operations.length : 0,
-    achievedOperationsPerSecond: elapsedSeconds ? completed / elapsedSeconds : 0, errors, schedulerDrops, retries,
+    startAt: new Date(requestedStart).toISOString(), scheduledStartAt: new Date(requestedStart).toISOString(), scheduledEndAt: new Date(requestedStart + elapsedSeconds * 1000).toISOString(), actualStartAt: new Date(actualStartEpochMs).toISOString(), actualEndAt: new Date(actualEndEpochMs).toISOString(), actualDurationMs: actualEndEpochMs - actualStartEpochMs, startSkewMs: actualStartEpochMs - requestedStart, durationSeconds: elapsedSeconds, scheduled: operations.length, completed, failed: Object.values(errors).reduce((sum, value) => sum + value, 0) - schedulerDrops, completionRate: operations.length ? completed / operations.length : 0,
+    achievedOperationsPerSecond: elapsedSeconds ? completed / elapsedSeconds : 0, errors, schedulerDrops, retries, workload: { readPercent: config.workload.readPercent, writePercent: config.workload.writePercent, executionMode },
     successfulServiceLatencyMs: distribution(successfulService), successfulIntendedLatencyMs: distribution(successfulIntended), failedServiceLatencyMs: distribution(failedService), queueDelayMs: distribution(queueDelays),
-    concurrency: { configuredMaxInflight: config.load.maxInflight, observedAtOperationStart: { ...distribution(concurrency), max: peakInflight } },
+    concurrency: { executionMode, configuredMaxInflight: config.load.maxInflight, effectiveMaxInflight, observedAtOperationStart: { ...distribution(concurrency), max: peakInflight } },
     client: { cpuUsageMicros: process.cpuUsage(cpuStart), memoryAtEnd: process.memoryUsage(), eventLoopDelayMs: { mean: fixed(loopDelay.mean / 1e6), p95: fixed(loopDelay.percentile(95) / 1e6), p99: fixed(loopDelay.percentile(99) / 1e6), max: fixed(loopDelay.max / 1e6) } },
     consumedCapacity: { readUnits: fixed(readUnits), writeUnits: fixed(writeUnits) }
   };
-  summary.passed = completed === operations.length && schedulerDrops === 0 && Object.keys(errors).length === 0;
+  summary.accounted = completed + summary.failed + schedulerDrops;
+  summary.harnessPassed = summary.accounted === operations.length && schedulerDrops === 0;
+  summary.serviceSuccessRate = operations.length ? completed / operations.length : 0;
+  summary.passed = summary.harnessPassed;
   fs.writeFileSync(path.join(output, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   fs.writeFileSync(path.join(output, "run-config.json"), `${JSON.stringify({ config, configSha256, target, table, endpointConfigured: Boolean(process.env.DDB_ENDPOINT) }, null, 2)}\n`);
   return summary;

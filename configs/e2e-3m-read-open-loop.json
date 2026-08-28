@@ -5,6 +5,7 @@
   "workload": { "readPercent": 100, "writePercent": 0, "consistency": "strong" },
   "load": {
     "model": "open-loop",
+    "executionMode": "concurrent",
     "schedule": [
       { "seconds": 36, "operationsPerSecond": 25 },
       { "seconds": 36, "operationsPerSecond": 50 },

@@ -15,6 +15,10 @@ export function validateConfig(config) {
   if (config.dataset?.distribution !== "uniform") throw new Error("v0.1 supports only uniform distribution");
   const mix = (config.workload?.readPercent ?? -1) + (config.workload?.writePercent ?? -1);
   if (mix !== 100) throw new Error("readPercent + writePercent must equal 100");
+  for (const name of ["readPercent", "writePercent"]) {
+    const value = config.workload?.[name];
+    if (!Number.isFinite(value) || value < 0 || value > 100) throw new Error(`workload.${name} must be between 0 and 100`);
+  }
   if (!['strong', 'eventual'].includes(config.workload?.consistency)) throw new Error("unsupported consistency");
   if (config.load?.model === "open-loop") {
     if (!Array.isArray(config.load.schedule) || !config.load.schedule.length) throw new Error("load.schedule is required");
@@ -24,6 +28,9 @@ export function validateConfig(config) {
     }
     positive(config.load.maxInflight, "load.maxInflight");
     positive(config.load.telemetryIntervalMs, "load.telemetryIntervalMs");
+    config.load.executionMode ??= "concurrent";
+    if (!["concurrent", "sequential"].includes(config.load.executionMode)) throw new Error("load.executionMode must be concurrent or sequential");
+    if (config.load.executionMode === "sequential" && config.load.maxInflight !== 1) throw new Error("sequential execution requires load.maxInflight = 1");
   } else if (config.load?.model === "closed-loop") {
     if (!Array.isArray(config.load.concurrencyLevels) || !config.load.concurrencyLevels.length) throw new Error("concurrencyLevels are required");
     config.load.concurrencyLevels.forEach((value, index) => positive(value, `concurrencyLevels[${index}]`));
@@ -46,4 +53,3 @@ export function readConfig(path) {
 export function scheduledOperationCount(config) {
   return config.load.schedule.reduce((sum, step) => sum + Math.floor(step.seconds * step.operationsPerSecond), 0);
 }
-
