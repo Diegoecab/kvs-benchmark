@@ -33,7 +33,7 @@ function fixture() {
 
 test("HTML report is self-contained and exposes interactive provider labels", () => {
   const { root, suiteFile } = fixture(); const output = path.join(root, "report.html"); const data = generateReport({ suite: suiteFile, output }); const html = fs.readFileSync(output, "utf8");
-  assert.equal(data.sessions[0].targets.aws.throttling.affectedSeconds, 1); assert.match(html, /data-series="aws"/); assert.match(html, /Offered load/); assert.match(html, /Exact execution windows \(UTC\)/); assert.match(html, /Scheduled start/); assert.match(html, /manifest|Evidence and reproducibility/);
+  assert.equal(data.sessions[0].targets.aws.throttling.affectedSeconds, 1); assert.match(html, /data-series="aws"/); assert.match(html, /Offered load/); assert.match(html, /Exact execution windows \(UTC\)/); assert.match(html, /Scheduled start/); assert.match(html, /capacity\?\.events/); assert.doesNotMatch(html, /\[180,480\]/); assert.match(html, /manifest|Evidence and reproducibility/);
   assert.doesNotThrow(() => new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]));
 });
 
