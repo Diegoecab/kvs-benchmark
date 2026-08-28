@@ -37,7 +37,7 @@ function schemaMatches(target, observed) {
   }
   const schema = observed.schema || {}; const primary = schema["primary-key"] || schema.primaryKey || [];
   const shard = schema["shard-key"] || schema.shardKey || [];
-  const columns = Object.fromEntries((schema.columns || []).map(value => [value.name, String(value.type).toUpperCase()]));
+  const columns = Object.fromEntries((schema.columns || schema.fields || []).map(value => [value.name, String(value.type).toUpperCase()]));
   return primary.join(",") === "pk,sk" && shard.join(",") === "pk" && columns.pk === "STRING" && columns.sk === "STRING" && columns.version === "LONG" && columns.payload === "STRING";
 }
 

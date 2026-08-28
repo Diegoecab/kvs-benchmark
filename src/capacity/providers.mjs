@@ -55,7 +55,7 @@ export function createCapacityProvider({ target, table, endpoint, timeoutMs = 60
       const result = await client.getTable(table);
       let schema = result.schema;
       if (typeof schema === "string") { try { schema = JSON.parse(schema); } catch {} }
-      return { state: result.tableState, capacityMode: String(result.tableLimits?.mode || "PROVISIONED"), read: result.tableLimits?.readUnits, write: result.tableLimits?.writeUnits, storageGB: result.tableLimits?.storageGB, schema, tableDDL: result.tableDDL };
+      return { state: result.tableState?.name || String(result.tableState), capacityMode: String(result.tableLimits?.mode || "PROVISIONED"), read: result.tableLimits?.readUnits, write: result.tableLimits?.writeUnits, storageGB: result.tableLimits?.storageGB, schema, tableDDL: result.tableDDL };
     };
     return {
       inspect,

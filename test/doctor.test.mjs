@@ -30,3 +30,19 @@ test("cloud doctor validates clock, canonical schema, and provisioned capacity w
     assert.equal(report.ready, true); assert.equal(report.checks.find(value => value.name === "host-clock").passed, true); assert.equal(report.checks.find(value => value.name === "provisioned-capacity").passed, true);
   } finally { if (previousRegion === undefined) delete process.env.AWS_REGION; else process.env.AWS_REGION = previousRegion; }
 });
+
+test("cloud doctor accepts the OCI SDK v2 schema representation", async () => {
+  const { config } = readConfig(new URL("../configs/x1-read-open-loop.json", import.meta.url));
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-doctor-ndcs-"));
+  const clock = path.join(folder, "chronyc.txt");
+  fs.writeFileSync(clock, "System time     : 0.000001 seconds fast of NTP time\nLeap status     : Normal\n");
+  const previous = { region: process.env.OCI_REGION, compartment: process.env.OCI_COMPARTMENT_ID, principal: process.env.OCI_USE_INSTANCE_PRINCIPAL };
+  Object.assign(process.env, { OCI_REGION: "us-ashburn-1", OCI_COMPARTMENT_ID: "test", OCI_USE_INSTANCE_PRINCIPAL: "true" });
+  try {
+    const capacityProvider = { inspect: async () => ({ state: "ACTIVE", capacityMode: "PROVISIONED", read: 200, write: 200, storageGB: 10, schema: { fields: [{ name: "pk", type: "STRING" }, { name: "sk", type: "STRING" }, { name: "version", type: "LONG" }, { name: "payload", type: "STRING" }], primaryKey: ["pk", "sk"], shardKey: ["pk"] } }), close: async () => {} };
+    const report = await doctor({ config, target: "ndcs", table: "table", hostEvidence: clock, capacityProvider, skipNetwork: true });
+    assert.equal(report.ready, true);
+  } finally {
+    for (const [key, value] of Object.entries({ OCI_REGION: previous.region, OCI_COMPARTMENT_ID: previous.compartment, OCI_USE_INSTANCE_PRINCIPAL: previous.principal })) value === undefined ? delete process.env[key] : process.env[key] = value;
+  }
+});
