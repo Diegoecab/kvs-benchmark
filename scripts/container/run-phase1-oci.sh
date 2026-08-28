@@ -8,5 +8,6 @@ set -eu
 : "${CONFIG:=configs/x1-read-open-loop.json}"
 : "${CAPACITY_PLAN:=configs/phase1-x1-strong-capacity.json}"
 : "${RESULTS_DIR:=$PWD/results/phase1/ndcs}"
+: "${CONTAINER_RUNTIME:=docker}"
 mkdir -p "$RESULTS_DIR"
-exec docker run --rm --network host -e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION -e OCI_COMPARTMENT_ID -v "$RESULTS_DIR:/app/results" "$IMAGE" phase1 --config="$CONFIG" --plan="$CAPACITY_PLAN" --target=ndcs --table="$TABLE" --output=results/run --start-at="$START_AT"
+exec "$CONTAINER_RUNTIME" run --rm --network host -e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION -e OCI_COMPARTMENT_ID -v "$RESULTS_DIR:/app/results:Z" "$IMAGE" phase1 --config="$CONFIG" --plan="$CAPACITY_PLAN" --target=ndcs --table="$TABLE" --output=results/run --start-at="$START_AT"

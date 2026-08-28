@@ -10,6 +10,8 @@ import { readCapacityPlan, runCapacityPlan } from "./core/capacity.mjs";
 import { createCapacityProvider } from "./capacity/providers.mjs";
 import { generateReport } from "./report/html.mjs";
 import { generatePackage } from "./report/package.mjs";
+import { coordinate, readCoordinationPlan } from "./core/coordinator.mjs";
+import { collectMetrics } from "./collectors/metrics.mjs";
 
 function args() {
   const values = { command: process.argv[2] };
@@ -28,7 +30,7 @@ if (options.command === "validate") {
   process.stdout.write(`${JSON.stringify({ valid: true, name: loaded.config.name, model: loaded.config.load.model, scheduledOperations: loaded.config.load.model === "open-loop" ? scheduledOperationCount(loaded.config) : null, sha256: loaded.sha256 }, null, 2)}\n`);
 } else if (options.command === "doctor") {
   if (!options.target) throw new Error("--target is required");
-  const report = await doctor({ config: loaded.config, target: options.target, endpoint: options.endpoint, skipNetwork: options["skip-network"] === "true" });
+  const report = await doctor({ config: loaded.config, target: options.target, table: options.table, endpoint: options.endpoint, skipNetwork: options["skip-network"] === "true", hostEvidence: options["clock-evidence"] });
   if (options.output) fs.writeFileSync(options.output, `${JSON.stringify(report, null, 2)}\n`);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (!report.ready) process.exitCode = 2;
@@ -82,4 +84,13 @@ if (options.command === "validate") {
   if (!options.suite || !options.output) throw new Error("package requires --suite and --output");
   const manifest = generatePackage({ suite: options.suite, output: options.output });
   process.stdout.write(`${JSON.stringify({ output: path.resolve(options.output), fileCount: manifest.fileCount }, null, 2)}\n`);
-} else throw new Error("command must be validate, doctor, run, preload, certify, capacity, phase1, report, or package");
+} else if (options.command === "coordinate") {
+  if (!options.plan || !options.output) throw new Error("coordinate requires --plan and --output");
+  const report = await coordinate({ plan: readCoordinationPlan(options.plan), output: options.output, startAt: options["start-at"], dryRun: options["dry-run"] === "true" });
+  process.stdout.write(`${JSON.stringify({ sharedStartAt: report.sharedStartAt, passed: report.passed ?? null, runners: report.runners.map(value => ({ target: value.target, exitCode: value.exitCode ?? null, commandSha256: value.commandSha256 })) }, null, 2)}\n`);
+  if (report.passed === false) process.exitCode = 2;
+} else if (options.command === "metrics") {
+  if (!options.target || !options["start-at"] || !options["end-at"] || !options.output) throw new Error("metrics requires --target, --start-at, --end-at, and --output");
+  const report = await collectMetrics({ target: options.target, table: options.table, startAt: options["start-at"], endAt: options["end-at"], output: options.output, region: options.region, compartment: options.compartment, resourceId: options["resource-id"], profile: options.profile });
+  process.stdout.write(`${JSON.stringify({ target: report.target, startAt: report.startAt, endAt: report.endAt, metricCount: report.metrics.length, output: path.resolve(options.output) }, null, 2)}\n`);
+} else throw new Error("command must be validate, doctor, run, preload, certify, capacity, phase1, report, package, coordinate, or metrics");

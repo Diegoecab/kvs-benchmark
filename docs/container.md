@@ -18,7 +18,7 @@ The same `linux/amd64` digest must run on AWS and OCI. Credentials are supplied 
 ## Host contract
 
 - Linux amd64 VM with at least 4 logical CPUs and 16 GiB RAM.
-- Docker Engine or compatible OCI runtime.
+- Docker Engine or Podman. Set `CONTAINER_RUNTIME=podman` for the checked-in wrappers when applicable.
 - Host clock synchronized and independently evidenced.
 - Outbound TCP/443 to the selected service endpoint and metadata service access when instance identity is used.
 - Writable host results directory.
@@ -34,4 +34,3 @@ The GitHub workflow publishes an SBOM and maximum-mode build provenance alongsid
 docker build -t kvs-benchmark:test .
 docker run --rm kvs-benchmark:test doctor --config=configs/smoke.json --target=mock --skip-network=true
 ```
-

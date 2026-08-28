@@ -49,15 +49,29 @@ Choose preload/audit rates below the table's effective capacity. Increasing conc
 4. Run `validate`, then `preload`, then `certify`.
 5. Schedule all three `run` commands with the same UTC `--start-at`.
 
-A future `doctor` command will automate runtime, credential, connectivity, NTP, schema, capacity, and client-headroom checks without modifying infrastructure.
-
-The first `doctor` version now checks runtime, visible CPU/RAM, required environment, endpoint DNS/TCP connectivity, and image identity. Table schema/capacity inspection and host NTP evidence remain pending. Run it before preload:
+The cloud-aware `doctor` checks runtime, visible CPU/RAM, required environment, endpoint DNS/TCP connectivity, image identity, host clock evidence, and existing table state/schema/capacity. It does not create or update infrastructure. Run it before preload:
 
 ```bash
-docker run --rm --network host -e AWS_REGION ghcr.io/diegoecab/kvs-benchmark-runner@sha256:DIGEST doctor --config=configs/x1-read-open-loop.json --target=aws
+IMAGE='ghcr.io/diegoecab/kvs-benchmark-runner@sha256:DIGEST' TABLE='TABLE' scripts/container/doctor-aws.sh
 ```
 
 See [container.md](container.md) and the scripts under `scripts/container/` for equivalent AWS, ADB API, and OCI NoSQL commands.
+
+## Coordinated triplet and monitoring evidence
+
+`coordinate` launches exactly one AWS, ADB API, and OCI NoSQL runner with a shared UTC T0. The plan contains executable plus argument arrays, avoiding shell interpolation. It records command fingerprints and collection status.
+
+```bash
+node src/cli.mjs coordinate --plan=results/session-plan.json --output=results/coordinator
+```
+
+After the session, `metrics` captures provider-side monitoring for the exact window. Run it from an operator checkout with the AWS/OCI CLIs installed; cloud CLIs are intentionally not included in the runner image.
+
+```bash
+node src/cli.mjs metrics --target=aws --start-at=START --end-at=END --table=TABLE --region=us-east-1 --output=results/aws/monitoring
+node src/cli.mjs metrics --target=ndcs --start-at=START --end-at=END --resource-id=TABLE_OCID --compartment=COMPARTMENT_OCID --profile=PROFILE --output=results/ndcs/monitoring
+node src/cli.mjs metrics --target=adb --start-at=START --end-at=END --resource-id=ADB_OCID --compartment=COMPARTMENT_OCID --profile=PROFILE --output=results/adb/monitoring
+```
 
 ## Phase 1
 

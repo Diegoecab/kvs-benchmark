@@ -1,6 +1,8 @@
 import dns from "node:dns/promises";
+import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
+import { createCapacityProvider } from "../capacity/providers.mjs";
 
 function endpointHost(target, endpoint) {
   if (target === "adb") return endpoint ? new URL(endpoint).hostname : null;
@@ -20,7 +22,37 @@ async function tcpCheck(host, timeoutMs = 3000) {
   return addresses.map(value => value.address);
 }
 
-export async function doctor({ config, target, endpoint, skipNetwork = false }) {
+function expectedCapacity(config, target) {
+  if (target === "aws") return { read: config.capacity?.awsDynamodb?.readCapacityUnits, write: config.capacity?.awsDynamodb?.writeCapacityUnits };
+  if (target === "adb") return { read: config.capacity?.adbDynamodbApi?.readCapacityUnits, write: config.capacity?.adbDynamodbApi?.writeCapacityUnits };
+  if (target === "ndcs") return { read: config.capacity?.ociNosql?.readUnits, write: config.capacity?.ociNosql?.writeUnits, storageGB: config.capacity?.ociNosql?.storageGb };
+  return null;
+}
+
+function schemaMatches(target, observed) {
+  if (["aws", "adb"].includes(target)) {
+    const keys = Object.fromEntries((observed.keySchema || []).map(value => [value.AttributeName, value.KeyType]));
+    const types = Object.fromEntries((observed.attributeDefinitions || []).map(value => [value.AttributeName, value.AttributeType]));
+    return keys.pk === "HASH" && keys.sk === "RANGE" && types.pk === "S" && types.sk === "S";
+  }
+  const schema = observed.schema || {}; const primary = schema["primary-key"] || schema.primaryKey || [];
+  const shard = schema["shard-key"] || schema.shardKey || [];
+  const columns = Object.fromEntries((schema.columns || []).map(value => [value.name, String(value.type).toUpperCase()]));
+  return primary.join(",") === "pk,sk" && shard.join(",") === "pk" && columns.pk === "STRING" && columns.sk === "STRING" && columns.version === "LONG" && columns.payload === "STRING";
+}
+
+function clockEvidence(file) {
+  if (!file) return { passed: false, detail: "--clock-evidence is required for cloud targets" };
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    const leap = raw.match(/Leap status\s*:\s*([^\r\n]+)/i)?.[1]?.trim();
+    const system = raw.match(/System time\s*:\s*([0-9.eE+-]+)\s+seconds\s+(fast|slow)/i);
+    const offsetSeconds = system ? Number(system[1]) * (system[2].toLowerCase() === "slow" ? -1 : 1) : null;
+    return { passed: leap === "Normal" && Number.isFinite(offsetSeconds) && Math.abs(offsetSeconds) <= 0.05, detail: { leapStatus: leap || null, offsetSeconds } };
+  } catch (error) { return { passed: false, detail: error.message }; }
+}
+
+export async function doctor({ config, target, table, endpoint, skipNetwork = false, hostEvidence, capacityProvider }) {
   const checks = [];
   const check = (name, passed, detail, required = true) => checks.push({ name, passed: Boolean(passed), required, detail });
   const major = Number(process.versions.node.split(".")[0]);
@@ -40,6 +72,23 @@ export async function doctor({ config, target, endpoint, skipNetwork = false }) 
     const auth = process.env.OCI_USE_INSTANCE_PRINCIPAL === "true" || Boolean(process.env.OCI_CONFIG_FILE);
     check("oci-auth", auth, process.env.OCI_USE_INSTANCE_PRINCIPAL === "true" ? "instance principal" : process.env.OCI_CONFIG_FILE ? "mounted OCI config" : "auth configuration missing");
   }
+  if (target !== "mock") {
+    check("table-name", Boolean(table), table || "--table missing");
+    const time = clockEvidence(hostEvidence); check("host-clock", time.passed, time.detail);
+    if (table) {
+      let provider = capacityProvider;
+      try {
+        provider ||= createCapacityProvider({ target, table, endpoint });
+        const observed = await provider.inspect(); const expected = expectedCapacity(config, target);
+        check("table-state", observed.state === "ACTIVE", observed.state);
+        check("capacity-mode", observed.capacityMode === "PROVISIONED", observed.capacityMode);
+        check("table-schema", schemaMatches(target, observed), { expected: "pk HASH/SHARD + sk RANGE, canonical attributes", observed: target === "ndcs" ? observed.schema : observed.keySchema });
+        const fields = target === "ndcs" ? ["read", "write", "storageGB"] : ["read", "write"];
+        check("provisioned-capacity", fields.every(field => Number(observed[field]) === Number(expected?.[field])), { expected, observed: Object.fromEntries(fields.map(field => [field, observed[field]])) });
+      } catch (error) { check("table-inspection", false, { name: error.name, message: error.message }); }
+      finally { if (!capacityProvider && provider) await provider.close(); }
+    }
+  }
   try {
     const host = endpointHost(target, endpoint || process.env.DDB_ENDPOINT);
     if (host && !skipNetwork) {
@@ -49,7 +98,6 @@ export async function doctor({ config, target, endpoint, skipNetwork = false }) 
   } catch (error) {
     check("endpoint-443", false, { error: `invalid endpoint: ${error.message}` });
   }
-  check("ntp", false, "must be verified on the host and included in run evidence", false);
   const report = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -57,7 +105,7 @@ export async function doctor({ config, target, endpoint, skipNetwork = false }) 
     target,
     configName: config.name,
     checks,
-    limitations: ["Does not create or modify infrastructure", "Does not inspect table schema or capacity yet", "NTP must be verified on the host"],
+    limitations: ["Does not create or modify infrastructure", "Does not prove capacity-update permission because a no-op UpdateTable is still mutating", "Provider monitoring is collected separately"],
   };
   report.ready = checks.filter(value => value.required).every(value => value.passed);
   return report;

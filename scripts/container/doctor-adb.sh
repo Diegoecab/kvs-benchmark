@@ -5,13 +5,14 @@ set -eu
 : "${DDB_ENDPOINT:?Set DDB_ENDPOINT}"
 : "${AWS_ACCESS_KEY_ID:?Set a short-lived access key}"
 : "${AWS_SECRET_ACCESS_KEY:?Set a short-lived secret key}"
-: "${CONFIG:=configs/x1-read-open-loop.json}"
-: "${RESULTS_DIR:=$PWD/results/adb}"
-: "${START_AT:?Set START_AT to a shared UTC timestamp}"
+: "${RESULTS_DIR:=$PWD/results/doctor/adb}"
 : "${CONTAINER_RUNTIME:=docker}"
 mkdir -p "$RESULTS_DIR"
+chronyc tracking > "$RESULTS_DIR/chronyc-tracking.txt"
 exec "$CONTAINER_RUNTIME" run --rm --network host \
   -e AWS_REGION=us-ashburn-1 \
   -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT \
   -v "$RESULTS_DIR:/app/results:Z" \
-  "$IMAGE" run --config="$CONFIG" --target=adb --table="$TABLE" --output=results/run --start-at="$START_AT"
+  "$IMAGE" doctor --config=configs/x1-read-open-loop.json --target=adb \
+  --table="$TABLE" --clock-evidence=results/chronyc-tracking.txt \
+  --output=results/doctor.json

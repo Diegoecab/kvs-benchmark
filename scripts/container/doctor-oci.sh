@@ -4,14 +4,14 @@ set -eu
 : "${TABLE:?Set TABLE}"
 : "${OCI_COMPARTMENT_ID:?Set OCI_COMPARTMENT_ID}"
 : "${OCI_REGION:=us-ashburn-1}"
-: "${CONFIG:=configs/x1-read-open-loop.json}"
-: "${RESULTS_DIR:=$PWD/results/ndcs}"
-: "${START_AT:?Set START_AT to a shared UTC timestamp}"
+: "${RESULTS_DIR:=$PWD/results/doctor/ndcs}"
 : "${CONTAINER_RUNTIME:=docker}"
 mkdir -p "$RESULTS_DIR"
+chronyc tracking > "$RESULTS_DIR/chronyc-tracking.txt"
 exec "$CONTAINER_RUNTIME" run --rm --network host \
   -e OCI_USE_INSTANCE_PRINCIPAL=true \
-  -e OCI_REGION \
-  -e OCI_COMPARTMENT_ID \
+  -e OCI_REGION -e OCI_COMPARTMENT_ID \
   -v "$RESULTS_DIR:/app/results:Z" \
-  "$IMAGE" run --config="$CONFIG" --target=ndcs --table="$TABLE" --output=results/run --start-at="$START_AT"
+  "$IMAGE" doctor --config=configs/x1-read-open-loop.json --target=ndcs \
+  --table="$TABLE" --clock-evidence=results/chronyc-tracking.txt \
+  --output=results/doctor.json

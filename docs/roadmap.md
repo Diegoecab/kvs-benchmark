@@ -9,11 +9,12 @@
 - [ ] Closed-loop concurrency-sweep executor
 - [x] Capacity transition controller and timeline correlation
 - [x] Dataset preload/audit certificate
-- [ ] Provider monitoring collectors
+- [x] Provider monitoring collectors
 - [x] Operation-stream acceptance gate and SHA-256 evidence manifest
 - [x] Interactive self-contained HTML report
 - [ ] Automated pricing calculation and price-source capture
 - [ ] Infrastructure-as-code modules
 - [x] Non-mutating prerequisite `doctor` foundation
 - [x] Portable runner container with SBOM and build provenance
-- [ ] Table schema/capacity inspection in `doctor`
+- [x] Table schema/capacity inspection in `doctor`
+- [x] Three-target shared-T0 coordinator

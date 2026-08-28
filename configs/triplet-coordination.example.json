@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "name": "phase0-strong-r1",
+  "leadTimeSeconds": 120,
+  "runners": [
+    { "target": "aws", "command": "ssh", "args": ["AWS_RUNNER", "cd kvs-benchmark && START_AT={{START_AT}} ./run-session.sh"], "collect": { "command": "scp", "args": ["-r", "AWS_RUNNER:results/session", "results/phase0/strong/r1/aws"] } },
+    { "target": "adb", "command": "ssh", "args": ["ADB_RUNNER", "cd kvs-benchmark && START_AT={{START_AT}} ./run-session.sh"], "collect": { "command": "scp", "args": ["-r", "ADB_RUNNER:results/session", "results/phase0/strong/r1/adb"] } },
+    { "target": "ndcs", "command": "ssh", "args": ["NDCS_RUNNER", "cd kvs-benchmark && START_AT={{START_AT}} ./run-session.sh"], "collect": { "command": "scp", "args": ["-r", "NDCS_RUNNER:results/session", "results/phase0/strong/r1/ndcs"] } }
+  ]
+}

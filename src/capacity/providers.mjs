@@ -20,8 +20,11 @@ export function createCapacityProvider({ target, table, endpoint, timeoutMs = 60
       const result = await client.send(new DescribeTableCommand({ TableName: table }));
       return {
         state: result.Table?.TableStatus,
+        capacityMode: result.Table?.BillingModeSummary?.BillingMode || "PROVISIONED",
         read: result.Table?.ProvisionedThroughput?.ReadCapacityUnits,
         write: result.Table?.ProvisionedThroughput?.WriteCapacityUnits,
+        keySchema: result.Table?.KeySchema,
+        attributeDefinitions: result.Table?.AttributeDefinitions,
       };
     };
     return {
@@ -50,7 +53,9 @@ export function createCapacityProvider({ target, table, endpoint, timeoutMs = 60
     });
     const inspect = async () => {
       const result = await client.getTable(table);
-      return { state: result.tableState, read: result.tableLimits?.readUnits, write: result.tableLimits?.writeUnits, storageGB: result.tableLimits?.storageGB };
+      let schema = result.schema;
+      if (typeof schema === "string") { try { schema = JSON.parse(schema); } catch {} }
+      return { state: result.tableState, capacityMode: String(result.tableLimits?.mode || "PROVISIONED"), read: result.tableLimits?.readUnits, write: result.tableLimits?.writeUnits, storageGB: result.tableLimits?.storageGB, schema, tableDDL: result.tableDDL };
     };
     return {
       inspect,

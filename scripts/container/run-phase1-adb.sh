@@ -9,5 +9,6 @@ set -eu
 : "${CONFIG:=configs/x1-read-open-loop.json}"
 : "${CAPACITY_PLAN:=configs/phase1-x1-strong-capacity.json}"
 : "${RESULTS_DIR:=$PWD/results/phase1/adb}"
+: "${CONTAINER_RUNTIME:=docker}"
 mkdir -p "$RESULTS_DIR"
-exec docker run --rm --network host -e AWS_REGION=us-ashburn-1 -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT -v "$RESULTS_DIR:/app/results" "$IMAGE" phase1 --config="$CONFIG" --plan="$CAPACITY_PLAN" --target=adb --table="$TABLE" --output=results/run --start-at="$START_AT"
+exec "$CONTAINER_RUNTIME" run --rm --network host -e AWS_REGION=us-ashburn-1 -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT -v "$RESULTS_DIR:/app/results:Z" "$IMAGE" phase1 --config="$CONFIG" --plan="$CAPACITY_PLAN" --target=adb --table="$TABLE" --output=results/run --start-at="$START_AT"

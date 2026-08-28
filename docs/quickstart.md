@@ -4,7 +4,7 @@
 
 1. Create three dedicated, empty benchmark tables outside this repository.
 2. Provision the capacity declared by the selected workload profile and disable configurable autoscaling.
-3. Place one adequately sized Docker host in `us-east-1` and the OCI hosts in `us-ashburn-1`; synchronize host clocks.
+3. Place one adequately sized container host in `us-east-1` and the OCI hosts in `us-ashburn-1`; synchronize host clocks.
 4. Grant data-plane access. For Phase 1, also grant capacity inspection/update access only to the dedicated benchmark table or compartment.
 5. Select one immutable runner image digest and use it everywhere.
 
@@ -13,9 +13,21 @@ export IMAGE='ghcr.io/diegoecab/kvs-benchmark-runner@sha256:DIGEST'
 docker pull "$IMAGE"
 ```
 
+Docker and Podman are supported. Set `CONTAINER_RUNTIME=podman` on hosts that use Podman.
+
+## Prove readiness
+
+Run the target-specific wrapper on each host before preload. It records `chronyc tracking`, validates credentials/connectivity, and inspects the existing table state, provisioned capacity, and canonical key schema without modifying it.
+
+```bash
+IMAGE="$IMAGE" TABLE='TABLE' RESULTS_DIR="$PWD/results/doctor/aws" scripts/container/doctor-aws.sh
+```
+
 ## Prepare the identical dataset
 
 On each target host, run `doctor`, `preload`, and `certify`. Use the same workload configuration for all three. Copy the three `dataset-certificate.json` files to the results collector and confirm the hashes match.
+
+Before a 15-minute accepted session, use `configs/rehearsal-read-open-loop.json` for a synchronized 60-second, read-only rehearsal. Its canonical dataset contract is identical to the x1 profile and it never changes capacity.
 
 ## Phase 0: fixed capacity
 
@@ -27,6 +39,12 @@ IMAGE="$IMAGE" TABLE='TABLE' START_AT="$START_AT" RESULTS_DIR="$PWD/results/phas
 ```
 
 Run the ADB and OCI scripts at the same time. Repeat with a new T0 for `r2`.
+
+For centrally launched sessions, copy `configs/triplet-coordination.example.json`, replace its runner commands, and dry-run it before execution:
+
+```bash
+node src/cli.mjs coordinate --plan=results/session-plan.json --output=results/coordinator --dry-run=true
+```
 
 ## Phase 1: T+3 scale-down and T+8 scale-up
 
