@@ -10,7 +10,7 @@ The harness defines its own versioned methodology for deterministic open-loop sc
 
 ## Status
 
-`v0.1` provides validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop execution, synchronized Phase 1 capacity transitions, concurrency/client-health telemetry, HTML evidence packaging, and offline tests. Cloud provisioning and a closed-loop runner are tracked in the roadmap.
+`v0.1` provides validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop and fixed-concurrency closed-loop execution, synchronized Phase 1 capacity transitions, concurrency/client-health telemetry, HTML evidence packaging, and offline tests. Cloud provisioning remains outside this repository.
 
 The harness also loads and certifies the canonical dataset in pre-existing, dedicated benchmark tables. It does not provision cloud infrastructure or create tables.
 

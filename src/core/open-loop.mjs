@@ -57,7 +57,8 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
       let result = null, error = null;
       try {
         const key = canonicalKey(operation.keyIndex, config.dataset.partitionBuckets);
-        result = operation.operation === "read" ? await provider.read(key) : await provider.write(key, config.dataset.seed * 1_000_000 + operation.sequence);
+        const writeVersion = config.workload.writeMode === "idempotent" ? 1 : config.dataset.seed * 1_000_000 + operation.sequence;
+        result = operation.operation === "read" ? await provider.read(key) : await provider.write(key, writeVersion);
       } catch (caught) { error = errorEvidence(caught); }
       const endedPerf = performance.now();
       const serviceLatencyMs = endedPerf - actualStartPerf;

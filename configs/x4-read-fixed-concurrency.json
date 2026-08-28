@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "name": "x4-read-fixed-concurrency",
+  "dataset": { "keyCount": 10000, "payloadBytes": 900, "partitionBuckets": 64, "seed": 20260728, "distribution": "uniform" },
+  "workload": { "readPercent": 100, "writePercent": 0, "consistency": "strong" },
+  "load": { "model": "closed-loop", "fixedConcurrency": 8, "durationSeconds": 300, "telemetryIntervalMs": 100 },
+  "client": { "maxConnections": 128, "requestTimeoutMs": 5000, "connectionTimeoutMs": 3000, "maxAttempts": 1 },
+  "capacity": {
+    "awsDynamodb": { "readCapacityUnits": 400, "writeCapacityUnits": 400 },
+    "adbDynamodbApi": { "readCapacityUnits": 400, "writeCapacityUnits": 400, "mappedTableEcpu": 9 },
+    "ociNosql": { "readUnits": 800, "writeUnits": 800, "storageGb": 10 }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "x4-mixed-70-30-open-loop",
+  "dataset": { "keyCount": 10000, "payloadBytes": 900, "partitionBuckets": 64, "seed": 20260728, "distribution": "uniform" },
+  "workload": { "readPercent": 70, "writePercent": 30, "writeMode": "idempotent", "consistency": "strong" },
+  "load": {
+    "model": "open-loop",
+    "executionMode": "concurrent",
+    "schedule": [
+      { "seconds": 60, "operationsPerSecond": 100 },
+      { "seconds": 60, "operationsPerSecond": 200 },
+      { "seconds": 60, "operationsPerSecond": 400 },
+      { "seconds": 60, "operationsPerSecond": 600 },
+      { "seconds": 60, "operationsPerSecond": 300 }
+    ],
+    "maxInflight": 4096,
+    "telemetryIntervalMs": 100
+  },
+  "client": { "maxConnections": 512, "requestTimeoutMs": 5000, "connectionTimeoutMs": 3000, "maxAttempts": 1 },
+  "capacity": {
+    "awsDynamodb": { "readCapacityUnits": 400, "writeCapacityUnits": 400 },
+    "adbDynamodbApi": { "readCapacityUnits": 400, "writeCapacityUnits": 400, "mappedTableEcpu": 9 },
+    "ociNosql": { "readUnits": 800, "writeUnits": 800, "storageGb": 10 }
+  }
+}

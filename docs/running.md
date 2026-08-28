@@ -6,7 +6,7 @@
 node src/cli.mjs run --config=configs/smoke.json --target=mock --table=local --output=results/mock
 ```
 
-Use a reduced schedule for local development; the checked-in certified profiles run for 15 minutes.
+Use a reduced schedule for local development. The current real-test profiles are five minutes; duration is explicit in the effective configuration and may be overridden for diagnostics.
 
 ## AWS DynamoDB
 
@@ -29,6 +29,12 @@ Set `OCI_REGION`, `OCI_COMPARTMENT_ID`, and either `OCI_USE_INSTANCE_PRINCIPAL=t
 The output directory contains `operations.ndjson`, `telemetry.ndjson`, `summary.json`, and `run-config.json`. Treat raw evidence as potentially sensitive and do not commit it.
 
 Set `workload.readPercent` and `workload.writePercent` to values that total 100. Set `load.executionMode` to `concurrent` for a scheduled offered-load test, or to `sequential` with `load.maxInflight: 1` for exactly one request in flight. The summary records the selected mix, execution mode, scheduled UTC window, actual UTC window, and observed maximum concurrency.
+
+Profiles are the reproducible source of truth, but controlled runtime overrides are supported and included in the effective configuration hash: `--duration-seconds`, `--fixed-concurrency`, `--read-percent`, `--write-percent`, `--write-mode`, `--rate-multiplier`, and `--execution-mode`. The equivalent environment variables are `KVS_DURATION_SECONDS`, `KVS_FIXED_CONCURRENCY`, `KVS_READ_PERCENT`, `KVS_WRITE_PERCENT`, `KVS_WRITE_MODE`, `KVS_RATE_MULTIPLIER`, and `KVS_EXECUTION_MODE`.
+
+Fixed concurrency uses a closed-loop profile with a constant number of workers. It is a throughput-under-concurrency experiment and must not be described as an offered-rate run. For mixed workloads, use `writeMode: "idempotent"` to measure same-size overwrites without allowing rejected writes to make target datasets diverge.
+
+The current five-minute matrix and its capacity-covered balanced phase are defined in [real-benchmark-matrix.md](real-benchmark-matrix.md).
 
 ## Dataset preload and certificate
 

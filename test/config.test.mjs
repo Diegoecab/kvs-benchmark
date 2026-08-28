@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readConfig, scheduledOperationCount, validateConfig } from "../src/core/config.mjs";
+import { applyRuntimeOverrides, readConfig, scheduledOperationCount, validateConfig } from "../src/core/config.mjs";
 import { canonicalRecord, expectedDatasetSha256 } from "../src/core/dataset.mjs";
 
 test("certified x1 profile schedules 72,000 operations", () => {
@@ -42,6 +42,34 @@ test("execution mode is explicit and sequential mode enforces one in-flight oper
   assert.throws(() => validateConfig(sequential), /maxInflight = 1/);
   sequential.load.maxInflight = 1;
   assert.equal(validateConfig(sequential).load.executionMode, "sequential");
+});
+
+test("runtime overrides are validated, applied, and included in a new effective hash", () => {
+  const loaded = readConfig(new URL("../configs/x4-read-open-loop.json", import.meta.url));
+  const effective = applyRuntimeOverrides(loaded, { durationSeconds: 300, rateMultiplier: 0.5 });
+  assert.equal(effective.config.load.schedule.reduce((sum, step) => sum + step.seconds, 0), 300);
+  assert.deepEqual(effective.config.load.schedule.map(step => step.operationsPerSecond), [50, 100, 200, 300, 150]);
+  assert.notEqual(effective.sha256, loaded.sha256); assert.equal(effective.baseSha256, loaded.sha256);
+  const fixed = applyRuntimeOverrides(readConfig(new URL("../configs/x4-read-fixed-concurrency.json", import.meta.url)), { durationSeconds: 60, fixedConcurrency: 4 });
+  assert.equal(fixed.config.load.durationSeconds, 60); assert.equal(fixed.config.load.fixedConcurrency, 4);
+});
+
+test("workloads with writes require an explicit write mode", () => {
+  const config = structuredClone(readConfig(new URL("../configs/smoke.json", import.meta.url)).config); config.workload = { readPercent: 70, writePercent: 30, consistency: "strong" };
+  assert.throws(() => validateConfig(config), /writeMode/); config.workload.writeMode = "idempotent"; assert.doesNotThrow(() => validateConfig(config));
+});
+
+test("capacity-covered 50/50 profile normalizes strong reads and writes with equal headroom", () => {
+  const config = readConfig(new URL("../configs/x4-mixed-50-50-capacity-covered.json", import.meta.url)).config;
+  assert.equal(config.load.schedule.reduce((sum, step) => sum + step.seconds, 0), 300);
+  assert.equal(Math.max(...config.load.schedule.map(step => step.operationsPerSecond)), 600);
+  assert.deepEqual(config.capacityCoverage.awsAndAdbRequired, { read: 300, write: 300 });
+  assert.deepEqual(config.capacityCoverage.ociNosqlRequired, { read: 600, write: 600 });
+  assert.deepEqual(config.capacity.ociNosql, { readUnits: 800, writeUnits: 800, storageGb: 10 });
+  assert.equal(config.capacityCoverage.awsAndAdbRequired.read / config.capacity.awsDynamodb.readCapacityUnits, 0.75);
+  assert.equal(config.capacityCoverage.awsAndAdbRequired.write / config.capacity.awsDynamodb.writeCapacityUnits, 0.75);
+  assert.equal(config.capacityCoverage.ociNosqlRequired.read / config.capacity.ociNosql.readUnits, 0.75);
+  assert.equal(config.capacityCoverage.ociNosqlRequired.write / config.capacity.ociNosql.writeUnits, 0.75);
 });
 
 test("canonical dataset hash is deterministic and content-sensitive", () => {

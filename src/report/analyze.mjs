@@ -80,7 +80,7 @@ export function analyzeSuite(suiteFile) {
   const sessions = [];
   for (const definition of suite.sessions) {
     if (!definition.id || !definition.phase || !definition.consistency) throw new Error("every session requires id, phase, and consistency");
-    const session = { id: definition.id, phase: definition.phase, consistency: definition.consistency, repetition: definition.repetition || definition.id, targets: {} };
+    const session = { id: definition.id, phase: definition.phase, consistency: definition.consistency, workload: definition.workload || null, repetition: definition.repetition || definition.id, targets: {} };
     for (const target of TARGETS) {
       const input = targetInput(definition.targets?.[target]); if (!input?.run) throw new Error(`${definition.id} is missing ${target}`);
       const directory = path.resolve(root, input.run); const summary = json(path.join(directory, "summary.json"));
@@ -94,17 +94,29 @@ export function analyzeSuite(suiteFile) {
         if (capacity?.passed !== true) throw new Error(`${definition.id}/${target} capacity transition evidence is not accepted`);
         if (capacity.events?.length !== 2 || capacity.events[0]?.name !== "scale-down" || capacity.events[1]?.name !== "scale-up") throw new Error(`${definition.id}/${target} must contain scale-down and scale-up evidence`);
       }
-      session.targets[target] = { summary, ...raw, capacity, evidencePath: input.run.replaceAll("\\", "/") };
+      session.targets[target] = { summary, ...raw, capacity, evidencePath: input.run.replaceAll("\\", "/"), capacityEvidencePath: capacity ? path.relative(root, capacityFile).replaceAll("\\", "/") : null };
     }
     if (new Set(TARGETS.map(target => session.targets[target].summary.configSha256)).size !== 1) throw new Error(`${definition.id} target configuration hashes differ`);
-    const scheduleHashes = new Set(TARGETS.map(target => session.targets[target].scheduleSha256));
-    if (scheduleHashes.size !== 1) throw new Error(`${definition.id} target operation schedules differ`);
+    const loadModels = new Set(TARGETS.map(target => session.targets[target].summary.loadModel || "open-loop"));
+    if (loadModels.size !== 1) throw new Error(`${definition.id} target load models differ`);
+    const loadModel = [...loadModels][0];
+    if (loadModel === "open-loop") {
+      const scheduleHashes = new Set(TARGETS.map(target => session.targets[target].scheduleSha256));
+      if (scheduleHashes.size !== 1) throw new Error(`${definition.id} target operation schedules differ`);
+    } else {
+      const concurrencies = new Set(TARGETS.map(target => session.targets[target].summary.concurrency?.targetConcurrency));
+      const durations = new Set(TARGETS.map(target => session.targets[target].summary.durationSeconds));
+      if (concurrencies.size !== 1 || [...concurrencies][0] == null) throw new Error(`${definition.id} target fixed concurrency differs`);
+      if (durations.size !== 1) throw new Error(`${definition.id} target closed-loop durations differ`);
+    }
+    session.loadModel = loadModel;
+    session.workload ||= `${session.targets.aws.summary.workload?.readPercent ?? "?"}R/${session.targets.aws.summary.workload?.writePercent ?? "?"}W ${session.targets.aws.summary.workload?.executionMode || loadModel}`;
     for (const target of TARGETS) if (session.targets[target].recordCount !== session.targets[target].summary.scheduled) throw new Error(`${definition.id}/${target} raw record count does not match scheduled count`);
     sessions.push(session);
   }
   const groups = [];
-  for (const key of [...new Set(sessions.map(value => `${value.phase}|${value.consistency}`))]) {
-    const [phase, consistency] = key.split("|"); const selected = sessions.filter(value => value.phase === phase && value.consistency === consistency);
+  for (const key of [...new Set(sessions.map(value => `${value.phase}|${value.consistency}|${value.workload}`))]) {
+    const [phase, consistency, workload] = key.split("|"); const selected = sessions.filter(value => value.phase === phase && value.consistency === consistency && value.workload === workload);
     const targets = {};
     for (const target of TARGETS) {
       const values = selected.flatMap(value => value.targets[target].successfulValues);
@@ -112,8 +124,8 @@ export function analyzeSuite(suiteFile) {
       const completed = selected.reduce((sum, value) => sum + value.targets[target].summary.completed, 0);
       targets[target] = { scheduled, completed, completionRate: scheduled ? completed / scheduled : 0, successfulLatency: distribution(values), errors: selected.reduce((sum, value) => sum + Object.values(value.targets[target].errorCounts).reduce((a, b) => a + b, 0), 0), throttleAffectedSeconds: selected.reduce((sum, value) => sum + value.targets[target].throttling.affectedSeconds, 0) };
     }
-    groups.push({ phase, consistency, sessions: selected.map(value => value.id), targets });
+    groups.push({ phase, consistency, workload, loadModel: selected[0].loadModel, sessions: selected.map(value => value.id), targets });
   }
   for (const session of sessions) for (const target of TARGETS) delete session.targets[target].successfulValues;
-  return { schemaVersion: 1, generatedAt: new Date().toISOString(), title: suite.title, benchmarkId: suite.benchmarkId || null, scope: suite.scope || {}, pricing: suite.pricing || null, references: suite.references || {}, datasetCertificates: certificates, datasetCertified: certificates.length > 0, labels: LABELS, sessions, groups };
+  return { schemaVersion: 1, generatedAt: new Date().toISOString(), title: suite.title, benchmarkId: suite.benchmarkId || null, scope: suite.scope || {}, phaseDescriptions: suite.phaseDescriptions || {}, capacityComparison: suite.capacityComparison || {}, pricing: suite.pricing || null, references: suite.references || {}, datasetCertificates: certificates, datasetCertified: certificates.length > 0, labels: LABELS, sessions, groups };
 }

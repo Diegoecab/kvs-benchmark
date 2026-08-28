@@ -12,7 +12,7 @@
     "validate": "node src/cli.mjs validate",
     "test": "node --test",
     "secrets:check": "node scripts/check-secrets.mjs",
-    "check": "npm run test && npm run secrets:check && npm run validate -- --config=configs/x1-read-open-loop.json && npm run validate -- --config=configs/x1-read-eventual-open-loop.json && npm run validate -- --config=configs/x4-read-open-loop.json && npm run validate -- --config=configs/x4-read-eventual-open-loop.json && npm run validate -- --config=configs/e2e-3m-read-open-loop.json && npm run validate -- --config=configs/concurrency-sweep.json"
+    "check": "npm run test && npm run secrets:check && npm run validate -- --config=configs/x1-read-open-loop.json && npm run validate -- --config=configs/x1-read-eventual-open-loop.json && npm run validate -- --config=configs/x4-read-open-loop.json && npm run validate -- --config=configs/x4-read-eventual-open-loop.json && npm run validate -- --config=configs/x4-read-5m-open-loop.json && npm run validate -- --config=configs/x4-mixed-70-30-open-loop.json && npm run validate -- --config=configs/x4-read-fixed-concurrency.json && npm run validate -- --config=configs/x4-mixed-50-50-capacity-covered.json && npm run validate -- --config=configs/e2e-3m-read-open-loop.json && npm run validate -- --config=configs/concurrency-sweep.json"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.864.0",

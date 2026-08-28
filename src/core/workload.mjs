@@ -36,3 +36,11 @@ export function canonicalKey(index, buckets) {
   return { pk: `shard-${index % buckets}`, sk: `item-${index}` };
 }
 
+export function operationForSequence(config, sequence) {
+  const random = mulberry32((config.dataset.seed ^ Math.imul(sequence + 1, 0x9e3779b1)) >>> 0);
+  return {
+    sequence,
+    operation: random() * 100 < config.workload.readPercent ? "read" : "write",
+    keyIndex: Math.floor(random() * config.dataset.keyCount),
+  };
+}

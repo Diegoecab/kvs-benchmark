@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readConfig, scheduledOperationCount } from "./core/config.mjs";
+import { applyRuntimeOverrides, readConfig, scheduledOperationCount } from "./core/config.mjs";
 import { createProvider } from "./providers/index.mjs";
 import { runOpenLoop } from "./core/open-loop.mjs";
+import { runClosedLoop } from "./core/closed-loop.mjs";
 import { certifyDataset, preloadDataset } from "./core/dataset.mjs";
 import { doctor } from "./core/doctor.mjs";
 import fs from "node:fs";
@@ -25,7 +26,16 @@ function args() {
 const options = args();
 const configCommands = ["validate", "doctor", "run", "preload", "certify", "phase1"];
 if (configCommands.includes(options.command) && !options.config) throw new Error("--config is required");
-const loaded = options.config ? readConfig(options.config) : null;
+const runtimeOverrides = {
+  durationSeconds: options["duration-seconds"] ?? process.env.KVS_DURATION_SECONDS,
+  fixedConcurrency: options["fixed-concurrency"] ?? process.env.KVS_FIXED_CONCURRENCY,
+  readPercent: options["read-percent"] ?? process.env.KVS_READ_PERCENT,
+  writePercent: options["write-percent"] ?? process.env.KVS_WRITE_PERCENT,
+  writeMode: options["write-mode"] ?? process.env.KVS_WRITE_MODE,
+  rateMultiplier: options["rate-multiplier"] ?? process.env.KVS_RATE_MULTIPLIER,
+  executionMode: options["execution-mode"] ?? process.env.KVS_EXECUTION_MODE,
+};
+const loaded = options.config ? applyRuntimeOverrides(readConfig(options.config), runtimeOverrides) : null;
 if (options.command === "validate") {
   process.stdout.write(`${JSON.stringify({ valid: true, name: loaded.config.name, model: loaded.config.load.model, scheduledOperations: loaded.config.load.model === "open-loop" ? scheduledOperationCount(loaded.config) : null, sha256: loaded.sha256 }, null, 2)}\n`);
 } else if (options.command === "doctor") {
@@ -41,7 +51,9 @@ if (options.command === "validate") {
   try {
     const common = { config: executionConfig, configSha256: loaded.sha256, provider, target: options.target, table: options.table, output: options.output };
     const summary = options.command === "run"
-      ? await runOpenLoop({ ...common, startAt: options["start-at"] })
+      ? loaded.config.load.model === "closed-loop"
+        ? await runClosedLoop({ ...common, startAt: options["start-at"] })
+        : await runOpenLoop({ ...common, startAt: options["start-at"] })
       : options.command === "preload"
         ? await preloadDataset({ ...common, rate: Number(options.rate || 50), maxInflight: Number(options["max-inflight"] || 64) })
         : await certifyDataset({ ...common, rate: Number(options.rate || 25), maxInflight: Number(options["max-inflight"] || 64) });

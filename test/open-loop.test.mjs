@@ -32,7 +32,7 @@ test("open-loop summary passes only with complete error-free execution", async (
 test("sequential execution never exceeds one in-flight operation and preserves the configured mix", async () => {
   const output = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-open-loop-sequential-"));
   const sequential = structuredClone(config);
-  sequential.workload = { readPercent: 50, writePercent: 50, consistency: "strong" };
+  sequential.workload = { readPercent: 50, writePercent: 50, consistency: "strong", writeMode: "idempotent" };
   sequential.load = { model: "open-loop", executionMode: "sequential", schedule: [{ seconds: 0.08, operationsPerSecond: 50 }], maxInflight: 1, telemetryIntervalMs: 2 };
   let active = 0, peak = 0, reads = 0, writes = 0;
   const operation = async kind => { active += 1; peak = Math.max(peak, active); kind === "read" ? reads += 1 : writes += 1; await new Promise(resolve => setTimeout(resolve, 8)); active -= 1; return { attempts: 1 }; };

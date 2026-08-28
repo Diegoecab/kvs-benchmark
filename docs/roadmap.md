@@ -6,7 +6,8 @@
 - [x] AWS/ADB, OCI NoSQL, and mock adapters
 - [x] Complete safe exception metadata
 - [x] In-flight and client-health telemetry
-- [ ] Closed-loop concurrency-sweep executor
+- [x] Fixed-concurrency closed-loop executor
+- [ ] Automated multi-level closed-loop concurrency sweep
 - [x] Capacity transition controller and timeline correlation
 - [x] Dataset preload/audit certificate
 - [x] Provider monitoring collectors

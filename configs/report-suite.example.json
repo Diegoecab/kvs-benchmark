@@ -2,7 +2,13 @@
   "schemaVersion": 1,
   "title": "KVS Benchmark — Ashburn / us-east-1",
   "benchmarkId": "replace-with-run-id",
-  "scope": { "awsRegion": "us-east-1", "ociRegion": "us-ashburn-1", "multiRegion": false, "databaseSessions": 4 },
+  "scope": { "awsRegion": "us-east-1", "ociRegion": "us-ashburn-1", "multiRegion": false, "databaseSessions": 7, "durationSecondsPerSession": 300 },
+  "phaseDescriptions": {
+    "phase0": "Fixed provisioned capacity with no user-requested capacity transition.",
+    "phase1": "Controlled scale-down at T+60 seconds and scale-up at T+160 seconds while workload continues.",
+    "phase2": "Read-only closed-loop throughput measurement with eight fixed workers.",
+    "phase3": "Capacity-covered 50/50 workload with no user-requested capacity transition or required burst."
+  },
   "acceptance": { "maxStartSkewMs": 250 },
   "datasetCertificates": ["../results/audit/aws/dataset-certificate.json", "../results/audit/adb/dataset-certificate.json", "../results/audit/ndcs/dataset-certificate.json"],
   "pricing": {
@@ -21,9 +27,12 @@
     "ociNoSqlPlanning": "https://docs.oracle.com/en/cloud/paas/nosql-cloud/dtddt/plan-your-service.html"
   },
   "sessions": [
-    { "id": "phase0-r1", "phase": "phase0", "consistency": "strong", "repetition": "r1", "targets": { "aws": "../results/phase0/strong/r1/aws", "adb": "../results/phase0/strong/r1/adb", "ndcs": "../results/phase0/strong/r1/ndcs" } },
-    { "id": "phase0-r2", "phase": "phase0", "consistency": "strong", "repetition": "r2", "targets": { "aws": "../results/phase0/strong/r2/aws", "adb": "../results/phase0/strong/r2/adb", "ndcs": "../results/phase0/strong/r2/ndcs" } },
-    { "id": "phase1-r1", "phase": "phase1", "consistency": "strong", "repetition": "r1", "targets": { "aws": { "run": "../results/phase1/strong/r1/aws/workload", "capacityEvents": "../results/phase1/strong/r1/aws/capacity-events.json" }, "adb": { "run": "../results/phase1/strong/r1/adb/workload", "capacityEvents": "../results/phase1/strong/r1/adb/capacity-events.json" }, "ndcs": { "run": "../results/phase1/strong/r1/ndcs/workload", "capacityEvents": "../results/phase1/strong/r1/ndcs/capacity-events.json" } } },
-    { "id": "phase1-r2", "phase": "phase1", "consistency": "strong", "repetition": "r2", "targets": { "aws": { "run": "../results/phase1/strong/r2/aws/workload", "capacityEvents": "../results/phase1/strong/r2/aws/capacity-events.json" }, "adb": { "run": "../results/phase1/strong/r2/adb/workload", "capacityEvents": "../results/phase1/strong/r2/adb/capacity-events.json" }, "ndcs": { "run": "../results/phase1/strong/r2/ndcs/workload", "capacityEvents": "../results/phase1/strong/r2/ndcs/capacity-events.json" } } }
+    { "id": "phase0-r1", "phase": "phase0", "workload": "read-open-x4", "consistency": "strong", "repetition": "r1", "targets": { "aws": "../results/phase0/read/r1/aws", "adb": "../results/phase0/read/r1/adb", "ndcs": "../results/phase0/read/r1/ndcs" } },
+    { "id": "phase0-r2", "phase": "phase0", "workload": "read-open-x4", "consistency": "strong", "repetition": "r2", "targets": { "aws": "../results/phase0/read/r2/aws", "adb": "../results/phase0/read/r2/adb", "ndcs": "../results/phase0/read/r2/ndcs" } },
+    { "id": "phase0-w1", "phase": "phase0", "workload": "mixed-70-30-open-x4", "consistency": "strong", "repetition": "w1", "targets": { "aws": "../results/phase0/mixed/w1/aws", "adb": "../results/phase0/mixed/w1/adb", "ndcs": "../results/phase0/mixed/w1/ndcs" } },
+    { "id": "phase1-r1", "phase": "phase1", "workload": "read-open-x4", "consistency": "strong", "repetition": "r1", "targets": { "aws": { "run": "../results/phase1/read/r1/aws/workload", "capacityEvents": "../results/phase1/read/r1/aws/capacity-events.json" }, "adb": { "run": "../results/phase1/read/r1/adb/workload", "capacityEvents": "../results/phase1/read/r1/adb/capacity-events.json" }, "ndcs": { "run": "../results/phase1/read/r1/ndcs/workload", "capacityEvents": "../results/phase1/read/r1/ndcs/capacity-events.json" } } },
+    { "id": "phase1-r2", "phase": "phase1", "workload": "read-open-x4", "consistency": "strong", "repetition": "r2", "targets": { "aws": { "run": "../results/phase1/read/r2/aws/workload", "capacityEvents": "../results/phase1/read/r2/aws/capacity-events.json" }, "adb": { "run": "../results/phase1/read/r2/adb/workload", "capacityEvents": "../results/phase1/read/r2/adb/capacity-events.json" }, "ndcs": { "run": "../results/phase1/read/r2/ndcs/workload", "capacityEvents": "../results/phase1/read/r2/ndcs/capacity-events.json" } } },
+    { "id": "phase2-r3", "phase": "phase2", "workload": "read-fixed-concurrency-8", "consistency": "strong", "repetition": "r3", "targets": { "aws": "../results/phase2/read/r3/aws", "adb": "../results/phase2/read/r3/adb", "ndcs": "../results/phase2/read/r3/ndcs" } },
+    { "id": "phase3-w2", "phase": "phase3", "workload": "mixed-50-50-capacity-covered", "consistency": "strong", "repetition": "w2", "targets": { "aws": "../results/phase3/mixed/w2/aws", "adb": "../results/phase3/mixed/w2/adb", "ndcs": "../results/phase3/mixed/w2/ndcs" } }
   ]
 }

@@ -23,7 +23,9 @@ Threads, offered load, open requests, and network connections are different cont
 - Connection-pool limits are explicit provider settings.
 - Scheduler drops are failures and cannot be omitted from completion rate.
 
-The optional closed-loop sweep asks a separate question: **how does throughput and latency change as active client concurrency increases?** Its results must not be pooled with the primary open-loop ranking.
+A fixed-concurrency closed-loop run asks a separate question: **what throughput and latency does each target sustain with the same constant number of active workers?** Its results must not be pooled with the primary open-loop ranking.
+
+The capacity-covered balanced phase asks another separate question: **how do the products compare when a 50/50 workload remains below each table's normalized provisioned read and write limits?** It uses no capacity transition and is designed not to require burst capacity.
 
 ## Latency boundaries
 
