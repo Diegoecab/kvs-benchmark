@@ -12,6 +12,8 @@ The harness defines its own versioned methodology for deterministic open-loop sc
 
 `v0.1` provides validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop and fixed-concurrency closed-loop execution, synchronized Phase 1 capacity transitions, concurrency/client-health telemetry, HTML evidence packaging, and offline tests. Cloud provisioning remains outside this repository.
 
+The proposed optional local control dashboard is documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md). It keeps infrastructure management disabled by default and delegates it to a separate repository when explicitly enabled.
+
 The harness also loads and certifies the canonical dataset in pre-existing, dedicated benchmark tables. It does not provision cloud infrastructure or create tables.
 
 ## Quick start

@@ -29,19 +29,20 @@ function fixture() {
     targets[target] = { run: path.relative(root, directory), capacityEvents: path.relative(root, capacityFile) };
   }
   const datasetCertificates = ["aws", "adb", "ndcs"].map(target => { const file = path.join(root, `${target}-certificate.json`); fs.writeFileSync(file, JSON.stringify({ target, passed: true, expectedSha256: "fixture-dataset", observedSha256: "fixture-dataset" })); return path.basename(file); });
-  const suite = { schemaVersion: 1, title: "Fixture benchmark", benchmarkId: "fixture", scope: { multiRegion: false }, capacityComparison: { aws: { baseline: "100 RCU / 100 WCU", phase1Low: "50 RCU / 50 WCU" } }, pricing: { licenseModel: "BYOL" }, datasetCertificates, sessions: [{ id: "p1-r1", phase: "phase1", consistency: "strong", repetition: "r1", targets }] };
+  const supporting = path.join(root, "supporting.json"); fs.writeFileSync(supporting, JSON.stringify({ retained: true }));
+  const suite = { schemaVersion: 1, title: "Fixture benchmark", benchmarkId: "fixture", scope: { multiRegion: false }, executiveSummary: ["Fixture conclusion."], capacityComparison: { aws: { baseline: "100 RCU / 100 WCU", phase1Low: "50 RCU / 50 WCU" } }, pricing: { licenseModel: "BYOL" }, datasetCertificates, additionalEvidence: [{ label: "Supporting fixture", path: path.basename(supporting) }], sessions: [{ id: "p1-r1", phase: "phase1", consistency: "strong", repetition: "r1", targets }] };
   const suiteFile = path.join(root, "suite.json"); fs.writeFileSync(suiteFile, JSON.stringify(suite)); return { root, suiteFile };
 }
 
 test("HTML report is self-contained and exposes interactive provider labels", () => {
   const { root, suiteFile } = fixture(); const output = path.join(root, "report.html"); const data = generateReport({ suite: suiteFile, output }); const html = fs.readFileSync(output, "utf8");
-  assert.equal(data.sessions[0].targets.aws.throttling.affectedSeconds, 1); assert.match(html, /data-series="aws"/); assert.match(html, /Offered load/); assert.match(html, /href="#methodology"/); assert.match(html, /Benchmark methodology/); assert.match(html, /Controlled scale-down and scale-up/); assert.match(html, /Consistency:/); assert.match(html, /Provisioned KVS capacity/); assert.match(html, /100 RCU \/ 100 WCU/); assert.match(html, /Exact execution windows \(UTC\)/); assert.match(html, /Scheduled start/); assert.match(html, /capacity\?\.events/); assert.doesNotMatch(html, /\[180,480\]/); assert.match(html, /Evidence index and reproducibility/); assert.match(html, /operations NDJSON/);
+  assert.equal(data.sessions[0].targets.aws.throttling.affectedSeconds, 1); assert.match(html, /Fixture conclusion/); assert.match(html, /Supporting fixture/); assert.match(html, /data-series="aws"/); assert.match(html, /Offered load/); assert.match(html, /href="#methodology"/); assert.match(html, /Benchmark methodology/); assert.match(html, /Controlled scale-down and scale-up/); assert.match(html, /Consistency:/); assert.match(html, /Provisioned KVS capacity/); assert.match(html, /100 RCU \/ 100 WCU/); assert.match(html, /Exact execution windows \(UTC\)/); assert.match(html, /Scheduled start/); assert.match(html, /capacity\?\.events/); assert.doesNotMatch(html, /\[180,480\]/); assert.match(html, /Evidence index and reproducibility/); assert.match(html, /operations NDJSON/);
   assert.doesNotThrow(() => new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]));
 });
 
 test("package copies evidence and generates a SHA-256 manifest", () => {
   const { root, suiteFile } = fixture(); const output = path.join(root, "deliverable"); const manifest = generatePackage({ suite: suiteFile, output });
-  assert.ok(manifest.fileCount >= 10); assert.ok(fs.existsSync(path.join(output, "index.html"))); assert.ok(fs.existsSync(path.join(output, "manifest-sha256.json"))); assert.ok(manifest.entries.some(value => value.path.endsWith("operations.ndjson")));
+  assert.ok(manifest.fileCount >= 10); assert.ok(fs.existsSync(path.join(output, "index.html"))); assert.ok(fs.existsSync(path.join(output, "manifest-sha256.json"))); assert.ok(manifest.entries.some(value => value.path.endsWith("operations.ndjson"))); assert.ok(manifest.entries.some(value => value.path.endsWith("supporting.json")));
 });
 
 test("report rejects a non-identical target operation schedule", () => {

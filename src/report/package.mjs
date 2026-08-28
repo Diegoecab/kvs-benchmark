@@ -47,6 +47,15 @@ export function generatePackage({ suite: suiteFile, output }) {
     fs.copyFileSync(path.resolve(sourceRoot, certificate), path.join(packageRoot, relative));
     return relative;
   });
+  localized.additionalEvidence = (source.additionalEvidence || []).map((item, index) => {
+    const input = typeof item === "string" ? { label: path.basename(item), path: item } : item;
+    const sourcePath = path.resolve(sourceRoot, input.path);
+    const relative = slash(path.join("evidence", "supporting", `${index + 1}-${path.basename(sourcePath)}`));
+    const destination = path.join(packageRoot, relative);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.cpSync(sourcePath, destination, { recursive: true, errorOnExist: true });
+    return { ...input, path: relative };
+  });
   const localizedSuite = path.join(packageRoot, "suite.json"); fs.writeFileSync(localizedSuite, `${JSON.stringify(localized, null, 2)}\n`);
   generateReport({ suite: localizedSuite, output: path.join(packageRoot, "index.html") });
   fs.writeFileSync(path.join(packageRoot, "README.md"), `# ${source.title}\n\nOpen \`index.html\` in a modern browser. Chart data is embedded; evidence links are relative to this directory.\n\nVerify the packaged files with \`manifest-sha256.json\` before review. Raw evidence may contain cloud identifiers and must be reviewed before external distribution.\n`);

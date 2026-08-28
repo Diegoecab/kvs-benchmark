@@ -8,7 +8,26 @@ export const LABELS = { aws: "AWS DynamoDB", adb: "ADB DynamoDB API", ndcs: "OCI
 
 const json = file => JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
 const errorName = record => typeof record.error === "string" ? record.error : record.error?.name;
-const isThrottle = record => Boolean(errorName(record)?.match(/thrott|rate.?limit|too.?many|capacity/i) || record.error?.httpStatusCode === 429 || record.rateLimitDelayMs > 0);
+export const isThrottle = record => Boolean(errorName(record)?.match(/thrott|rate.?limit|limit.?exceeded|throughput.?exceeded|too.?many|capacity/i) || record.error?.httpStatusCode === 429 || record.rateLimitDelayMs > 0);
+
+function* lines(file, chunkBytes = 1024 * 1024) {
+  const descriptor = fs.openSync(file, "r");
+  const buffer = Buffer.allocUnsafe(chunkBytes);
+  let remainder = "";
+  try {
+    for (;;) {
+      const bytes = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (!bytes) break;
+      const text = remainder + buffer.toString("utf8", 0, bytes);
+      const parts = text.split(/\r?\n/);
+      remainder = parts.pop() || "";
+      yield* parts;
+    }
+    if (remainder) yield remainder;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
 
 function intervals(counts, t0) {
   const result = [];
@@ -31,10 +50,11 @@ function analyzeOperations(file, summary) {
   const timeline = Array.from({ length: duration }, (_, second) => ({ second, at: new Date(t0 + second * 1000).toISOString(), offeredRate: null, completed: 0, errors: 0, throttles: 0, latency: [] }));
   const successful = [], intended = [], byOperation = { read: [], write: [] }, errorCounts = {}, errorSeconds = {}, throttleSeconds = Array(duration).fill(0);
   const scheduleHash = crypto.createHash("sha256"), scheduleEntries = []; let records = 0, maximum = null;
-  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+  const compareLogicalSchedule = (summary.loadModel || "open-loop") === "open-loop";
+  for (const line of lines(file)) {
     if (!line) continue;
     const record = JSON.parse(line); records += 1;
-    scheduleEntries.push({ sequence: record.sequence, value: `${record.sequence}|${record.operation}|${record.keyIndex}|${record.scheduledEpochMs}|${record.offeredRate}\n` });
+    if (compareLogicalSchedule) scheduleEntries.push({ sequence: record.sequence, value: `${record.sequence}|${record.operation}|${record.keyIndex}|${record.scheduledEpochMs}|${record.offeredRate}\n` });
     const second = Math.max(0, Math.min(duration - 1, Math.floor((record.scheduledEpochMs - t0) / 1000)));
     const point = timeline[second]; point.offeredRate = record.offeredRate ?? point.offeredRate;
     const throttled = isThrottle(record);
@@ -49,12 +69,12 @@ function analyzeOperations(file, summary) {
       if (!maximum || record.serviceLatencyMs > maximum.serviceLatencyMs) maximum = { serviceLatencyMs: record.serviceLatencyMs, at: new Date(record.endedEpochMs).toISOString(), operation: record.operation, sequence: record.sequence };
     }
   }
-  scheduleEntries.sort((a, b) => a.sequence - b.sequence).forEach(entry => scheduleHash.update(entry.value));
+  if (compareLogicalSchedule) scheduleEntries.sort((a, b) => a.sequence - b.sequence).forEach(entry => scheduleHash.update(entry.value));
   for (const point of timeline) { const stats = distribution(point.latency); delete point.latency; Object.assign(point, { p50Ms: stats.p50, p95Ms: stats.p95, p99Ms: stats.p99, maxMs: stats.max }); }
   const throttleIntervals = intervals(throttleSeconds, t0);
   return {
     recordCount: records,
-    scheduleSha256: scheduleHash.digest("hex"),
+    scheduleSha256: compareLogicalSchedule ? scheduleHash.digest("hex") : null,
     successfulLatency: distribution(successful),
     intendedLatency: distribution(intended),
     byOperation: Object.fromEntries(Object.entries(byOperation).map(([name, values]) => [name, distribution(values)])),
@@ -127,5 +147,5 @@ export function analyzeSuite(suiteFile) {
     groups.push({ phase, consistency, workload, loadModel: selected[0].loadModel, sessions: selected.map(value => value.id), targets });
   }
   for (const session of sessions) for (const target of TARGETS) delete session.targets[target].successfulValues;
-  return { schemaVersion: 1, generatedAt: new Date().toISOString(), title: suite.title, benchmarkId: suite.benchmarkId || null, scope: suite.scope || {}, phaseDescriptions: suite.phaseDescriptions || {}, capacityComparison: suite.capacityComparison || {}, pricing: suite.pricing || null, references: suite.references || {}, datasetCertificates: certificates, datasetCertified: certificates.length > 0, labels: LABELS, sessions, groups };
+  return { schemaVersion: 1, generatedAt: new Date().toISOString(), title: suite.title, benchmarkId: suite.benchmarkId || null, scope: suite.scope || {}, executiveSummary: suite.executiveSummary || [], phaseDescriptions: suite.phaseDescriptions || {}, capacityComparison: suite.capacityComparison || {}, pricing: suite.pricing || null, references: suite.references || {}, additionalEvidence: suite.additionalEvidence || [], datasetCertificates: certificates, datasetCertified: certificates.length > 0, labels: LABELS, sessions, groups };
 }

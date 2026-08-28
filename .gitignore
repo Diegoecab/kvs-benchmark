@@ -1,6 +1,8 @@
 node_modules/
 results/*
 !results/.gitkeep
+benchmark-package/
+.kvs/
 .env
 .env.*
 .secrets/
@@ -16,4 +18,3 @@ terraform.tfstate*
 .terraform/
 oci_config
 wallet/
-
