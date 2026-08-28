@@ -6,9 +6,10 @@ set -eu
 : "${OCI_REGION:=us-ashburn-1}"
 : "${RESULTS_DIR:=$PWD/results/doctor/ndcs}"
 : "${CONTAINER_RUNTIME:=docker}"
+case "${CONTAINER_RUNTIME##*/}" in podman) set -- --userns=keep-id ;; *) set -- ;; esac
 mkdir -p "$RESULTS_DIR"
 chronyc tracking > "$RESULTS_DIR/chronyc-tracking.txt"
-exec "$CONTAINER_RUNTIME" run --rm --network host \
+exec "$CONTAINER_RUNTIME" run "$@" --rm --network host \
   -e OCI_USE_INSTANCE_PRINCIPAL=true \
   -e OCI_REGION -e OCI_COMPARTMENT_ID \
   -v "$RESULTS_DIR:/app/results:Z" \

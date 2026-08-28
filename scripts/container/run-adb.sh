@@ -9,8 +9,9 @@ set -eu
 : "${RESULTS_DIR:=$PWD/results/adb}"
 : "${START_AT:?Set START_AT to a shared UTC timestamp}"
 : "${CONTAINER_RUNTIME:=docker}"
+case "${CONTAINER_RUNTIME##*/}" in podman) set -- --userns=keep-id ;; *) set -- ;; esac
 mkdir -p "$RESULTS_DIR"
-exec "$CONTAINER_RUNTIME" run --rm --network host \
+exec "$CONTAINER_RUNTIME" run "$@" --rm --network host \
   -e AWS_REGION=us-ashburn-1 \
   -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT \
   -v "$RESULTS_DIR:/app/results:Z" \
