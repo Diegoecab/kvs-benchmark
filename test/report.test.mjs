@@ -47,3 +47,9 @@ test("report rejects a non-identical target operation schedule", () => {
   const records = fs.readFileSync(file, "utf8").trim().split(/\r?\n/).map(JSON.parse); records[0].keyIndex = 99; fs.writeFileSync(file, `${records.map(JSON.stringify).join("\n")}\n`);
   assert.throws(() => generateReport({ suite: suiteFile, output: path.join(root, "rejected.html") }), /operation schedules differ/);
 });
+
+test("report accepts identical logical schedules recorded in different completion order", () => {
+  const { root, suiteFile } = fixture(); const file = path.join(root, "source", "adb", "workload", "operations.ndjson");
+  const records = fs.readFileSync(file, "utf8").trim().split(/\r?\n/).reverse(); fs.writeFileSync(file, `${records.join("\n")}\n`);
+  assert.doesNotThrow(() => generateReport({ suite: suiteFile, output: path.join(root, "accepted.html") }));
+});

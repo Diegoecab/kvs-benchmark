@@ -30,11 +30,11 @@ function analyzeOperations(file, summary) {
   const duration = Math.max(1, Number(summary.durationSeconds || 900));
   const timeline = Array.from({ length: duration }, (_, second) => ({ second, at: new Date(t0 + second * 1000).toISOString(), offeredRate: null, completed: 0, errors: 0, throttles: 0, latency: [] }));
   const successful = [], intended = [], byOperation = { read: [], write: [] }, errorCounts = {}, errorSeconds = {}, throttleSeconds = Array(duration).fill(0);
-  const scheduleHash = crypto.createHash("sha256"); let records = 0, maximum = null;
+  const scheduleHash = crypto.createHash("sha256"), scheduleEntries = []; let records = 0, maximum = null;
   for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
     if (!line) continue;
     const record = JSON.parse(line); records += 1;
-    scheduleHash.update(`${record.sequence}|${record.operation}|${record.keyIndex}|${record.scheduledEpochMs}|${record.offeredRate}\n`);
+    scheduleEntries.push({ sequence: record.sequence, value: `${record.sequence}|${record.operation}|${record.keyIndex}|${record.scheduledEpochMs}|${record.offeredRate}\n` });
     const second = Math.max(0, Math.min(duration - 1, Math.floor((record.scheduledEpochMs - t0) / 1000)));
     const point = timeline[second]; point.offeredRate = record.offeredRate ?? point.offeredRate;
     const throttled = isThrottle(record);
@@ -49,6 +49,7 @@ function analyzeOperations(file, summary) {
       if (!maximum || record.serviceLatencyMs > maximum.serviceLatencyMs) maximum = { serviceLatencyMs: record.serviceLatencyMs, at: new Date(record.endedEpochMs).toISOString(), operation: record.operation, sequence: record.sequence };
     }
   }
+  scheduleEntries.sort((a, b) => a.sequence - b.sequence).forEach(entry => scheduleHash.update(entry.value));
   for (const point of timeline) { const stats = distribution(point.latency); delete point.latency; Object.assign(point, { p50Ms: stats.p50, p95Ms: stats.p95, p99Ms: stats.p99, maxMs: stats.max }); }
   const throttleIntervals = intervals(throttleSeconds, t0);
   return {
