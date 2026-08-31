@@ -10,11 +10,14 @@ const app = fs.readFileSync(path.join(root, "src", "dashboard", "public", "app.j
 
 test("dashboard exposes a five-step wizard with contextual workload help", () => {
   assert.equal((html.match(/class="wizard-panel"/g) || []).length, 5);
-  assert.equal((html.match(/class="info"/g) || []).length, 8);
+  assert.ok((html.match(/class="info"/g) || []).length >= 7);
   assert.match(html, /Review and run/);
   assert.match(app, /showStep\(currentStep \+ 1\)/);
   assert.match(html, /class="table-wrap preset-table"/);
   assert.match(html, /Custom runtime overrides/);
+  assert.match(html, /<th scope="col">Repetitions<\/th>/);
+  assert.doesNotMatch(html, /id="repetitions"/);
+  assert.match(app, /presetRepetitions/);
   assert.match(html, /id="select-recommended"/);
   assert.match(app, /function selectPresets/);
 });

@@ -21,8 +21,9 @@ function renderConfigs(configs) {
     const row = document.createElement("tr"), selectedByDefault = recommendedPreset(config.file);
     const choice = document.createElement("td"), input = document.createElement("input"); input.type = "checkbox"; input.value = config.file; input.checked = selectedByDefault; input.name = "config"; input.setAttribute("aria-label", `Run ${config.name}`); choice.append(input);
     const preset = document.createElement("td"), title = document.createElement("b"); title.textContent = config.name; preset.append(title); if (selectedByDefault) { const badge = document.createElement("small"); badge.className = "preset-badge"; badge.textContent = "Recommended"; preset.append(badge); }
+    const repetitionCell = document.createElement("td"), repetitions = document.createElement("input"); repetitions.type = "number"; repetitions.min = "1"; repetitions.step = "1"; repetitions.value = "1"; repetitions.className = "preset-repetitions"; repetitions.dataset.config = config.file; repetitions.setAttribute("aria-label", `Repetitions for ${config.name}`); repetitionCell.append(repetitions);
     const values = [config.model === "open-loop" ? "Open-loop" : "Fixed workers", `${config.readPercent}% / ${config.writePercent}%`, config.consistency === "strong" ? "Strong" : "Eventual", presetDuration(config.durationSeconds), config.loadSummary || "Profile-defined"];
-    row.append(choice, preset, ...values.map(value => { const cell = document.createElement("td"); cell.textContent = value; return cell; }));
+    row.append(choice, preset, repetitionCell, ...values.map(value => { const cell = document.createElement("td"); cell.textContent = value; return cell; }));
     input.addEventListener("change", () => { syncOverrideApplicability(); updatePresetCount(); }); return row;
   }));
   updatePresetCount();
@@ -59,7 +60,10 @@ function specification() {
   const overrides = { durationSeconds: optionalNumber("duration"), readPercent: optionalNumber("read-percent"), writePercent: optionalNumber("write-percent"), rateMultiplier: optionalNumber("rate-multiplier"), fixedConcurrency: optionalNumber("fixed-concurrency"), consistency: value("consistency") || undefined, executionMode: value("execution-mode") || undefined };
   Object.keys(overrides).forEach(key => overrides[key] === undefined && delete overrides[key]);
   const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
-  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: $("aws-enabled").checked, profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: $("adb-enabled").checked, profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerHost: adbRunner.publicIp, compartmentId: value("adb-compartment") }, ndcs: { enabled: $("ndcs-enabled").checked, profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerHost: ndcsRunner.publicIp, compartmentId: value("ndcs-compartment") } }, configs: [...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value), repetitions: Number(value("repetitions")), overrides, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
+  const configs = [...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value);
+  const repetitionsByFile = Object.fromEntries([...document.querySelectorAll(".preset-repetitions")].map(input => [input.dataset.config, Number(input.value)]));
+  const presetRepetitions = Object.fromEntries(configs.map(file => [file, repetitionsByFile[file] || 1]));
+  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: $("aws-enabled").checked, profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: $("adb-enabled").checked, profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerHost: adbRunner.publicIp, compartmentId: value("adb-compartment") }, ndcs: { enabled: $("ndcs-enabled").checked, profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerHost: ndcsRunner.publicIp, compartmentId: value("ndcs-compartment") } }, configs, presetRepetitions, overrides, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
 }
 
 function runnerOptions(select, values, preferredPattern) {
@@ -74,14 +78,15 @@ async function discoverRunners() {
     discovered = await response.json(); if (!response.ok) throw new Error(discovered.error || `Discovery failed (${response.status})`);
     runnerOptions($("aws-runner"), discovered.aws, /aws.*runner|runner.*aws/i); runnerOptions($("adb-runner"), discovered.oci, /adb.*runner/i); runnerOptions($("ndcs-runner"), discovered.oci, /ndcs|nosql/i);
     $("artifact-bucket").replaceChildren(new Option("Select an evidence bucket", ""), ...(discovered.artifactBuckets || []).map(name => new Option(name, name))); if (discovered.artifactBuckets?.length === 1) $("artifact-bucket").value = discovered.artifactBuckets[0];
-    $("runner-status").className = "callout"; $("runner-status").innerHTML = `<b>Discovery complete.</b> ${discovered.aws.length} AWS and ${discovered.oci.length} OCI runner(s); ${discovered.artifactBuckets?.length || 0} evidence bucket(s).`;
-  } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error.message; }
+    $("runner-status").className = "callout"; $("runner-status").innerHTML = `<b>Discovery complete.</b> ${(discovered.aws || []).length} AWS and ${(discovered.oci || []).length} OCI runner(s); ${discovered.artifactBuckets?.length || 0} evidence bucket(s).`; return true;
+  } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error?.message || String(error); return false; }
   finally { $("discover-runners").disabled = false; }
 }
 
 function lookupOptions(select, items, { label = item => item.name || item, valueOf = item => item.id || item, placeholder = "Select a discovered value", manual = false, preferred } = {}) {
-  const options = [new Option(placeholder, ""), ...items.map(item => new Option(label(item), valueOf(item)))]; if (manual) options.push(new Option("Enter manually...", "__manual__")); select.replaceChildren(...options);
-  if (preferred && [...select.options].some(option => option.value === preferred)) select.value = preferred; else if (items.length === 1) select.value = valueOf(items[0]);
+  if (!select) throw new Error("Destination form is out of date; reload the dashboard page");
+  const list = Array.isArray(items) ? items.filter(item => item != null) : [], options = [new Option(placeholder, ""), ...list.map(item => new Option(String(label(item) ?? "Unnamed"), String(valueOf(item) ?? "")))]; if (manual) options.push(new Option("Enter manually...", "__manual__")); select.replaceChildren(...options);
+  if (preferred && Array.from(select.options || []).some(option => option.value === preferred)) select.value = preferred; else if (list.length === 1) select.value = String(valueOf(list[0]) ?? "");
 }
 
 function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) !== "__manual__"; }
@@ -89,27 +94,31 @@ function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) 
 async function lookupDestinations() {
   $("lookup-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Reading accessible OCI compartments and available tables without modifying them...";
   try {
+    if (!bootstrap?.csrfToken) throw new Error("Dashboard session is not ready; reload the page");
+    if (!discovered && ($("adb-enabled").checked || $("ndcs-enabled").checked)) await discoverRunners();
     const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
+    const previous = { awsTable: resourceValue("aws-table"), adbTable: resourceValue("adb-table"), ndcsTable: resourceValue("ndcs-table") };
     const request = { awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile: value("adb-profile") || value("ndcs-profile"), ociRegion: value("adb-region") || value("ndcs-region"), adbCompartmentId: value("adb-compartment") || adbRunner.compartmentId, ndcsCompartmentId: value("ndcs-compartment") || ndcsRunner.compartmentId, adbRunnerHost: adbRunner.publicIp, targets: { aws: $("aws-enabled").checked, adb: $("adb-enabled").checked, ndcs: $("ndcs-enabled").checked } };
     const response = await fetch("/api/discover-destinations", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(request) }); destinations = await response.json(); if (!response.ok) throw new Error(destinations.error || `Destination lookup failed (${response.status})`);
     const previousAdbCompartment = request.adbCompartmentId, previousNdcsCompartment = request.ndcsCompartmentId;
-    lookupOptions($("adb-compartment"), destinations.compartments, { label: item => item.path, preferred: previousAdbCompartment, placeholder: "Select an accessible compartment" });
-    lookupOptions($("ndcs-compartment"), destinations.compartments, { label: item => item.path, preferred: previousNdcsCompartment, placeholder: "Select an accessible compartment" });
-    lookupOptions($("aws-table"), destinations.awsTables, { valueOf: item => item, label: item => item, placeholder: "Select an AWS table", manual: true, preferred: resourceValue("aws-table") });
-    lookupOptions($("adb-database"), destinations.autonomousDatabases, { label: item => `${item.name} | ${item.state} | ${item.computeCount ?? item.cpuCoreCount ?? "?"} compute`, preferred: destinations.adbRuntimeDatabaseId, placeholder: "Select an Autonomous Database" });
-    lookupOptions($("adb-table"), destinations.adbTables, { valueOf: item => item, label: item => item, placeholder: "Select a DynamoDB-API table", manual: true, preferred: resourceValue("adb-table") });
-    lookupOptions($("ndcs-table"), destinations.nosqlTables, { label: item => `${item.name} | ${item.state} | ${item.readUnits ?? "?"} RU / ${item.writeUnits ?? "?"} WU`, valueOf: item => item.name, placeholder: "Select an OCI NoSQL table", manual: true, preferred: resourceValue("ndcs-table") });
+    const compartments = Array.isArray(destinations.compartments) ? destinations.compartments : [], awsTables = Array.isArray(destinations.awsTables) ? destinations.awsTables : [], databases = Array.isArray(destinations.autonomousDatabases) ? destinations.autonomousDatabases : [], adbTables = Array.isArray(destinations.adbTables) ? destinations.adbTables : [], nosqlTables = Array.isArray(destinations.nosqlTables) ? destinations.nosqlTables : [];
+    lookupOptions($("adb-compartment"), compartments, { label: item => item.path, preferred: previousAdbCompartment, placeholder: "Select an accessible compartment" });
+    lookupOptions($("ndcs-compartment"), compartments, { label: item => item.path, preferred: previousNdcsCompartment, placeholder: "Select an accessible compartment" });
+    lookupOptions($("aws-table"), awsTables, { valueOf: item => item, label: item => item, placeholder: "Select an AWS table", manual: true, preferred: previous.awsTable });
+    lookupOptions($("adb-database"), databases, { label: item => `${item.name} | ${item.state} | ${item.computeCount ?? item.cpuCoreCount ?? "?"} compute`, preferred: destinations.adbRuntimeDatabaseId, placeholder: "Select an Autonomous Database" });
+    lookupOptions($("adb-table"), adbTables, { valueOf: item => item, label: item => item, placeholder: "Select a DynamoDB-API table", manual: true, preferred: previous.adbTable });
+    lookupOptions($("ndcs-table"), nosqlTables, { label: item => `${item.name} | ${item.state} | ${item.readUnits ?? "?"} RU / ${item.writeUnits ?? "?"} WU`, valueOf: item => item.name, placeholder: "Select an OCI NoSQL table", manual: true, preferred: previous.ndcsTable });
     for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
     const mismatch = destinations.adbRuntimeDatabaseId && value("adb-database") !== destinations.adbRuntimeDatabaseId;
-    $("runner-status").className = `callout${mismatch ? " warning" : ""}`; $("runner-status").innerHTML = `<b>Lookup complete.</b> ${destinations.compartments.length} OCI compartment(s), ${destinations.awsTables.length} AWS table(s), ${destinations.adbTables.length} ADB DynamoDB-API table(s), and ${destinations.nosqlTables.length} OCI NoSQL table(s).${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}`;
-  } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error.message; }
+    $("runner-status").className = `callout${mismatch ? " warning" : ""}`; $("runner-status").innerHTML = `<b>Lookup complete.</b> ${compartments.length} OCI compartment(s), ${awsTables.length} AWS table(s), ${adbTables.length} ADB DynamoDB-API table(s), and ${nosqlTables.length} OCI NoSQL table(s).${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}`;
+  } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = `Destination lookup failed: ${error?.message || String(error)}`; }
   finally { $("lookup-destinations").disabled = false; }
 }
 
 function renderReview() {
   const spec = specification(); const targets = Object.entries(spec.targets).filter(([, target]) => target.enabled).map(([name, target]) => `${name.toUpperCase()} (${target.profile || "no profile"}, ${target.region})`);
   const overrideText = Object.keys(spec.overrides).length ? Object.entries(spec.overrides).map(([key, item]) => `${key}: ${item}`).join(", ") : "Profile defaults";
-  const cards = [["Targets", targets.join("; ") || "None"], ["Infrastructure", spec.infrastructure.mode], ["Workloads", `${spec.configs.length} profile(s) x ${spec.repetitions} repetition(s)`], ["Execution", `${spec.execution.mode}; immutable parameters`], ["Overrides", overrideText]];
+  const repetitions = Object.values(spec.presetRepetitions).reduce((sum, count) => sum + count, 0), cards = [["Targets", targets.join("; ") || "None"], ["Infrastructure", spec.infrastructure.mode], ["Workloads", `${spec.configs.length} preset(s), ${repetitions} session(s)`], ["Execution", `${spec.execution.mode}; immutable parameters`], ["Overrides", overrideText]];
   $("review-summary").innerHTML = cards.map(([label, item]) => `<div class="summary-card"><span>${escapeHtml(label)}</span><b>${escapeHtml(item)}</b></div>`).join("");
 }
 

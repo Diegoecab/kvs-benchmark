@@ -29,7 +29,7 @@ The five-step wizard covers:
 
 1. AWS and OCI profiles, regions, OCI compartments, regional runners, and lookup-backed existing KVS resources.
 2. Existing-infrastructure or plan-only managed-infrastructure intent.
-3. A comparison table of checked-in workload presets, followed by optional validated custom runtime overrides.
+3. A comparison table of checked-in workload presets, with repetitions configured independently per preset, followed by optional validated custom runtime overrides.
 4. Async or live execution behavior.
 5. A final configuration summary, immutable matrix preview, functional test, and output download.
 

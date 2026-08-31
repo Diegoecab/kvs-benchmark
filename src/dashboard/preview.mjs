@@ -42,7 +42,7 @@ export function previewMatrix(spec, { configDirectory }) {
     if (!target.region) throw new Error(`${target.target} requires a region`);
     if (infrastructure.mode === "existing" && !target.resource) throw new Error(`${target.target} requires an existing database/table reference`);
   }
-  const repetitions = positiveInteger(spec.repetitions, 1, "repetitions");
+  const repetitions = positiveInteger(spec.repetitions, 1, "repetitions"), presetRepetitions = spec.presetRepetitions || {};
   const overrides = spec.overrides || {};
   if (overrides.readPercent != null && overrides.writePercent != null) {
     if (Number(overrides.readPercent) + Number(overrides.writePercent) !== 100) throw new Error("readPercent + writePercent must equal 100");
@@ -64,7 +64,8 @@ export function previewMatrix(spec, { configDirectory }) {
       }
     }
     const loaded = applyRuntimeOverrides(base, compatibleOverrides);
-    for (let repetition = 1; repetition <= repetitions; repetition += 1) {
+    const repetitionsForPreset = positiveInteger(presetRepetitions[file], repetitions, `${file} repetitions`);
+    for (let repetition = 1; repetition <= repetitionsForPreset; repetition += 1) {
       const durationSeconds = loaded.config.load.durationSeconds || loaded.config.load.schedule?.reduce((sum, step) => sum + step.seconds, 0) || null;
       const scheduledOperationsPerTarget = loaded.config.load.model === "open-loop" ? scheduledOperationCount(loaded.config) : null;
       rows.push({ id: `${loaded.config.name}-r${repetition}`, configFile: file, configName: loaded.config.name, configSha256: loaded.sha256, repetition, loadModel: loaded.config.load.model, executionMode: loaded.config.load.executionMode || "fixed-concurrency", durationSeconds, consistency: loaded.config.workload.consistency, readPercent: loaded.config.workload.readPercent, writePercent: loaded.config.workload.writePercent, fixedConcurrency: loaded.config.load.fixedConcurrency || null, ignoredOverrides, scheduledOperationsPerTarget, averageScheduledOperationsPerSecond: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget / durationSeconds, averageScheduledOperationsPerMinute: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget * 60 / durationSeconds, targets: targets.map(value => value.target) });

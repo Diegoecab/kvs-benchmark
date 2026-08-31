@@ -37,6 +37,18 @@ test("dashboard preview validates resources and applies consistency override", (
   assert.throws(() => previewMatrix({ configs: ["x4-mixed-70-30-open-loop.json"], targets: incomplete, infrastructure: { mode: "existing" } }, { configDirectory }), /aws requires an existing/);
 });
 
+test("dashboard preview applies repetitions independently per preset", () => {
+  const preview = previewMatrix({
+    configs: ["x4-mixed-70-30-open-loop.json", "x4-read-fixed-concurrency.json"],
+    presetRepetitions: { "x4-mixed-70-30-open-loop.json": 2, "x4-read-fixed-concurrency.json": 3 },
+    targets,
+    infrastructure: { mode: "existing" },
+  }, { configDirectory });
+  assert.equal(preview.rows.filter(row => row.configFile === "x4-mixed-70-30-open-loop.json").length, 2);
+  assert.equal(preview.rows.filter(row => row.configFile === "x4-read-fixed-concurrency.json").length, 3);
+  assert.equal(preview.rows.length, 5);
+});
+
 test("dashboard applies model-specific overrides only to compatible profiles", () => {
   const preview = previewMatrix({ configs: ["x4-mixed-70-30-open-loop.json", "x4-read-fixed-concurrency.json"], targets, repetitions: 1, infrastructure: { mode: "existing" }, overrides: { executionMode: "sequential", rateMultiplier: 2, fixedConcurrency: 7 } }, { configDirectory });
   const open = preview.rows.find(row => row.loadModel === "open-loop");
