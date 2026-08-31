@@ -80,8 +80,8 @@ function runnerOptions(select, values, preferredPattern) {
   const preferred = list.find(item => preferredPattern.test(item.name || "")); if (preferred) select.value = preferred.id;
 }
 
-async function discoverRunners() {
-  $("discover-runners").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Checking cloud identities, running instances, remote-control health, placement, and evidence buckets...";
+async function discoverRunners({ manageButton = true } = {}) {
+  if (manageButton) $("discover-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Step 1/2: checking cloud identities, runners, remote-control health, placement, and evidence buckets...";
   try {
     if (!cloudEnabled("aws") && !cloudEnabled("oci")) throw new Error("Select at least one cloud provider");
     const fetchInventory = async (ociProfile, ociRegion, clouds) => { const response = await fetch("/api/discover-runners", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify({ awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile, ociRegion, clouds }) }); const result = await response.json(); if (!response.ok) throw new Error(result?.error || `Discovery failed (${response.status})`); return result; };
@@ -94,7 +94,7 @@ async function discoverRunners() {
     $("artifact-bucket").replaceChildren(new Option("Select an evidence bucket", ""), ...(discovered.artifactBuckets || []).map(name => new Option(name, name))); if (discovered.artifactBuckets?.length === 1) $("artifact-bucket").value = discovered.artifactBuckets[0];
     $("runner-status").className = "callout"; $("runner-status").innerHTML = `<b>Discovery complete.</b> ${discovered.aws.length} AWS, ${discovered.adbOci.length} ADB-profile OCI, and ${discovered.ndcsOci.length} NoSQL-profile OCI runner(s); ${discovered.artifactBuckets.length} evidence bucket(s).`; return true;
   } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error?.message || String(error); return false; }
-  finally { $("discover-runners").disabled = false; }
+  finally { if (manageButton) $("discover-destinations").disabled = false; }
 }
 
 function lookupOptions(select, items, { label = item => item?.name || item, getValue = item => item?.id || item, placeholder = "Select a discovered value", manual = false, preferred } = {}) {
@@ -110,8 +110,8 @@ function lookupOptions(select, items, { label = item => item?.name || item, getV
 function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) !== "__manual__"; }
 function filterOptions(input) { const select = $(input.dataset.filterFor), query = input.value.trim().toLowerCase(); if (!select) return; for (const option of select.options) option.hidden = Boolean(query) && option.value !== select.value && !option.textContent.toLowerCase().includes(query); }
 
-async function lookupDestinations() {
-  $("lookup-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Reading accessible OCI compartments and available tables without modifying them...";
+async function lookupDestinations({ manageButton = true } = {}) {
+  if (manageButton) $("discover-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Step 2/2: reading accessible compartments, databases, tables, and evidence stores without modifying them...";
   let stage = "initialization";
   try {
     if (!bootstrap?.csrfToken) throw new Error("Dashboard session is not ready; reload the page");
@@ -151,7 +151,15 @@ async function lookupDestinations() {
     const mismatch = destinations.adbRuntimeDatabaseId && value("adb-database") !== destinations.adbRuntimeDatabaseId;
     $("runner-status").className = `callout${mismatch ? " warning" : ""}`; $("runner-status").innerHTML = `<b>Lookup complete.</b> ${adbCompartments.length} ADB-profile compartment(s), ${ndcsCompartments.length} NoSQL-profile compartment(s), ${awsTables.length} AWS table(s), ${adbTables.length} ADB DynamoDB-API table(s), and ${nosqlTables.length} OCI NoSQL table(s).${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}`;
   } catch (error) { console.error("Destination lookup failed", { stage, error }); $("runner-status").className = "callout error"; $("runner-status").textContent = `Destination lookup failed during ${stage}: ${error?.message || String(error)}`; }
-  finally { $("lookup-destinations").disabled = false; }
+  finally { if (manageButton) $("discover-destinations").disabled = false; }
+}
+
+async function discoverDestinations() {
+  $("discover-destinations").disabled = true;
+  try {
+    const ready = await discoverRunners({ manageButton: false });
+    if (ready) await lookupDestinations({ manageButton: false });
+  } finally { $("discover-destinations").disabled = false; }
 }
 
 function renderReview() {
@@ -262,6 +270,6 @@ for (const context of ["adb", "ndcs"]) for (const suffix of ["profile", "region"
   else { $("ndcs-compartment").innerHTML = '<option value="">Lookup using selected NoSQL profile</option>'; $("ndcs-table").innerHTML = '<option value="">Lookup OCI NoSQL tables</option>'; }
 });
 $("select-recommended").addEventListener("click", () => selectPresets(recommendedPreset)); $("select-all-presets").addEventListener("click", () => selectPresets(() => true)); $("clear-presets").addEventListener("click", () => selectPresets(() => false));
-$("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-runners").addEventListener("click", discoverRunners); $("lookup-destinations").addEventListener("click", lookupDestinations); $("refresh").addEventListener("click", () => load().catch(showLoadError));
+$("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-destinations").addEventListener("click", discoverDestinations); $("refresh").addEventListener("click", () => load().catch(showLoadError));
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
 syncCloudCatalog(); showStep(1); load().catch(showLoadError);

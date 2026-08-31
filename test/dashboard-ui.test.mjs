@@ -39,8 +39,9 @@ test("dashboard defaults to async and exposes live progress and package download
 test("dashboard exposes cloud and local test actions with model-aware overrides", () => {
   assert.match(html, /id="start-benchmark"[^>]*>Run selected cloud benchmark/);
   assert.match(html, /id="start-smoke"[^>]*>Run local functional test/);
-  assert.match(html, /id="discover-runners"/);
-  assert.match(html, /id="lookup-destinations"/);
+  assert.match(html, /id="discover-destinations"[^>]*>Discover destinations/);
+  assert.doesNotMatch(html, /id="discover-runners"/);
+  assert.doesNotMatch(html, /id="lookup-destinations"/);
   assert.match(html, /id="adb-compartment"/);
   assert.match(html, /id="ndcs-compartment"/);
   assert.match(html, /against any enabled targets/i);
@@ -48,6 +49,7 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.doesNotMatch(html, /Cloud execution adapter pending/);
   assert.match(app, /syncOverrideApplicability/);
   assert.match(app, /Runner discovery did not complete/);
+  assert.match(app, /async function discoverDestinations/);
   assert.match(app, /Destination lookup failed during \$\{stage\}/);
   assert.match(app, /Array\.isArray\(adbResult\?\.oci\)/);
   assert.match(app, /Array\.isArray\(ndcsResult\?\.oci\)/);

@@ -1,7 +1,22 @@
 .option-search {
   padding: .48rem .65rem;
-  background: #f8fafc;
-  font-size: .78rem;
+  background: #fff;
+  font-size: .82rem;
+}
+
+.lookup-search {
+  margin: 1rem 0 .25rem;
+  padding: .65rem;
+  border: 1px solid #d8e0ea;
+  border-radius: 10px;
+  background: #f7f9fc;
+}
+
+.lookup-search label {
+  margin: 0 0 .35rem;
+  color: #43536a;
+  font-size: .76rem;
+  letter-spacing: .02em;
 }
 
 .target-live {
