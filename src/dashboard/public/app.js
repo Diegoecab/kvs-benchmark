@@ -111,6 +111,28 @@ function lookupOptions(select, items, { label = item => item?.name || item, getV
 
 function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) !== "__manual__"; }
 function filterOptions(input) { const select = $(input.dataset.filterFor), query = input.value.trim().toLowerCase(); if (!select) return; for (const option of select.options) option.hidden = Boolean(query) && option.value !== select.value && !option.textContent.toLowerCase().includes(query); }
+function bytes(value) { if (value == null) return "Not exposed"; const units = ["B", "KB", "MB", "GB", "TB"]; let amount = Number(value), unit = 0; while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; } return `${number(amount)} ${units[unit]}`; }
+function autoscalingLabel(table) {
+  if (table?.billingMode === "PAY_PER_REQUEST") return "On-demand / service managed";
+  if (table?.autoscaling?.mode === "SERVICE_MANAGED") return "Service managed";
+  const read = table?.autoscaling?.read, write = table?.autoscaling?.write;
+  if (read || write) return [read && `Read ${read.min}-${read.max}`, write && `Write ${write.min}-${write.max}`].filter(Boolean).join("; ");
+  return table?.autoscaling?.mode === "NOT_DETECTED" ? "Not detected" : "Not configured";
+}
+function detailCard(provider, table, verified = true) {
+  if (!table) return "";
+  const mode = table.billingMode || table.capacityMode || "Unknown", reads = table.readCapacityUnits ?? table.readUnits, writes = table.writeCapacityUnits ?? table.writeUnits;
+  const rows = [["Status", table.status || table.state || "Unknown"], ["Capacity mode", mode], [provider === "OCI NoSQL" ? "Read units" : "RCU", reads ?? "N/A"], [provider === "OCI NoSQL" ? "Write units" : "WCU", writes ?? "N/A"], ["Autoscaling", autoscalingLabel(table)], [table.storageGB != null ? "Storage limit" : "Table size", table.storageGB != null ? `${number(table.storageGB)} GB` : bytes(table.tableSizeBytes)], ["Item count", table.itemCount == null ? "Not exposed" : number(table.itemCount)]];
+  return `<article class="resource-detail"><h3>${escapeHtml(provider)} · ${escapeHtml(table.name)}</h3><p>${verified ? "Live provider metadata" : "Recent local evidence · not live-verified"}</p><dl>${rows.map(([key, item]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(item)}</dd>`).join("")}</dl></article>`;
+}
+function renderDestinationDetails() {
+  if (!destinations) { $("destination-details").replaceChildren(); return; }
+  const aws = destinations.awsTables?.find(item => (item.name || item) === resourceValue("aws-table"));
+  const adb = destinations.adbTables?.find(item => (item.name || item) === resourceValue("adb-table"));
+  const ndcs = destinations.nosqlTables?.find(item => item.name === resourceValue("ndcs-table"));
+  const recent = destinations.recentEvidenceTables?.adb?.find(item => item.table === resourceValue("adb-table"));
+  $("destination-details").innerHTML = [detailCard("AWS DynamoDB", typeof aws === "string" ? { name: aws } : aws), detailCard("ADB DynamoDB API", typeof adb === "string" ? { name: adb } : adb, Boolean(adb)), !adb && recent ? detailCard("ADB DynamoDB API", { name: recent.table }, false) : "", detailCard("OCI NoSQL", ndcs)].join("");
+}
 
 async function lookupDestinations({ manageButton = true } = {}) {
   if (manageButton) $("discover-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Step 2/2: reading accessible compartments, databases, tables, and evidence stores without modifying them...";
@@ -132,29 +154,36 @@ async function lookupDestinations({ manageButton = true } = {}) {
     stage = "response normalization";
     destinations = result && typeof result === "object" ? result : {};
     const previousAdbCompartment = request.adbCompartmentId, previousNdcsCompartment = request.ndcsCompartmentId;
-    const adbCompartments = Array.isArray(destinations.adbCompartments) ? destinations.adbCompartments : [], ndcsCompartments = Array.isArray(destinations.ndcsCompartments) ? destinations.ndcsCompartments : [], awsTables = Array.isArray(destinations.awsTables) ? destinations.awsTables : [], databases = Array.isArray(destinations.autonomousDatabases) ? destinations.autonomousDatabases : [], adbTables = Array.isArray(destinations.adbTables) ? destinations.adbTables : [], nosqlTables = Array.isArray(destinations.nosqlTables) ? destinations.nosqlTables : [];
+    const adbCompartments = Array.isArray(destinations.adbCompartments) ? destinations.adbCompartments : [], ndcsCompartments = Array.isArray(destinations.ndcsCompartments) ? destinations.ndcsCompartments : [], awsTables = Array.isArray(destinations.awsTables) ? destinations.awsTables : [], databases = Array.isArray(destinations.autonomousDatabases) ? destinations.autonomousDatabases : [], adbTables = Array.isArray(destinations.adbTables) ? destinations.adbTables : [], recentAdbTables = Array.isArray(destinations.recentEvidenceTables?.adb) ? destinations.recentEvidenceTables.adb : [], nosqlTables = Array.isArray(destinations.nosqlTables) ? destinations.nosqlTables : [];
     stage = "ADB compartment rendering";
     lookupOptions($("adb-compartment"), adbCompartments, { label: item => item.path, preferred: previousAdbCompartment, placeholder: "Select an ADB-profile compartment" });
     stage = "OCI NoSQL compartment rendering";
     lookupOptions($("ndcs-compartment"), ndcsCompartments, { label: item => item.path, preferred: previousNdcsCompartment, placeholder: "Select a NoSQL-profile compartment" });
     stage = "AWS table rendering";
-    lookupOptions($("aws-table"), awsTables, { getValue: item => item, label: item => item, placeholder: "Select an AWS table", manual: true, preferred: previous.awsTable });
+    lookupOptions($("aws-table"), awsTables, { getValue: item => item.name || item, label: item => typeof item === "string" ? item : `${item.name} | ${item.billingMode || "?"} | ${item.readCapacityUnits ?? "-"} RCU / ${item.writeCapacityUnits ?? "-"} WCU | ${bytes(item.tableSizeBytes)}`, placeholder: "Select an AWS table", manual: true, preferred: previous.awsTable });
     stage = "Autonomous Database rendering";
     lookupOptions($("adb-database"), databases, { label: item => `${item.name} | ${item.state} | ${item.computeCount ?? item.cpuCoreCount ?? "?"} compute`, preferred: destinations.adbRuntimeDatabaseId, placeholder: "Select an Autonomous Database" });
     stage = "ADB DynamoDB-API table rendering";
-    lookupOptions($("adb-table"), adbTables, { getValue: item => item, label: item => item, placeholder: "Select a DynamoDB-API table", manual: true, preferred: previous.adbTable });
-    if (adbTables.length === 0) $("adb-table").value = "__manual__";
+    const liveAdbNames = new Set(adbTables.map(table => table.name || table));
+    const adbTableChoices = [...adbTables.map(table => ({ table: table.name || table, label: `${table.name || table} · live${typeof table === "object" ? ` | ${table.billingMode || "?"} | ${table.readCapacityUnits ?? "-"} RCU / ${table.writeCapacityUnits ?? "-"} WCU | ${bytes(table.tableSizeBytes)}` : ""}` })), ...recentAdbTables.filter(item => !liveAdbNames.has(item.table)).map(item => ({ table: item.table, label: `${item.table} · recent local evidence${item.observedAt ? ` · ${item.observedAt.slice(0, 10)}` : ""}` }))];
+    lookupOptions($("adb-table"), adbTableChoices, { getValue: item => item.table, label: item => item.label, placeholder: "Select a DynamoDB-API table", manual: true, preferred: previous.adbTable || recentAdbTables[0]?.table });
+    if (adbTableChoices.length === 0) $("adb-table").value = "__manual__";
     stage = "OCI NoSQL table rendering";
-    lookupOptions($("ndcs-table"), nosqlTables, { label: item => `${item.name} | ${item.state} | ${item.readUnits ?? "?"} RU / ${item.writeUnits ?? "?"} WU`, getValue: item => item.name, placeholder: "Select an OCI NoSQL table", manual: true, preferred: previous.ndcsTable });
+    lookupOptions($("ndcs-table"), nosqlTables, { label: item => `${item.name} | ${item.state} | ${item.capacityMode || "?"} | ${item.readUnits ?? "?"} RU / ${item.writeUnits ?? "?"} WU | ${item.storageGB ?? "?"} GB limit`, getValue: item => item.name, placeholder: "Select an OCI NoSQL table", manual: true, preferred: previous.ndcsTable });
     stage = "evidence bucket rendering";
     lookupOptions($("adb-artifact-bucket"), destinations.adbEvidenceBuckets, { getValue: item => item, label: item => item, placeholder: "Select an ADB evidence bucket", preferred: value("adb-artifact-bucket") });
     lookupOptions($("ndcs-artifact-bucket"), destinations.ndcsEvidenceBuckets, { getValue: item => item, label: item => item, placeholder: "Select a NoSQL evidence bucket", preferred: value("ndcs-artifact-bucket") });
     stage = "manual destination synchronization";
     for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
+    renderDestinationDetails();
     const mismatch = destinations.adbRuntimeDatabaseId && value("adb-database") !== destinations.adbRuntimeDatabaseId, partialErrors = Object.entries(destinations.discoveryErrors || {});
     const errorList = partialErrors.length ? `<ul>${partialErrors.map(([key, message]) => `<li><b>${escapeHtml(key)}:</b> ${escapeHtml(message)}</li>`).join("")}</ul>` : "";
-    const manualNote = !request.probeAdbTables && request.targets.adb ? " ADB table probing was not requested; enter the exact DynamoDB-API table name manually." : "";
-    $("runner-status").className = `callout${mismatch || partialErrors.length ? " warning" : ""}`; $("runner-status").innerHTML = `<b>${partialErrors.length ? "Partial lookup complete." : "Lookup complete."}</b> ${adbCompartments.length} ADB-profile compartment(s), ${ndcsCompartments.length} NoSQL-profile compartment(s), ${awsTables.length} AWS table(s), ${adbTables.length} ADB DynamoDB-API table(s), and ${nosqlTables.length} OCI NoSQL table(s).${manualNote}${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}${errorList}`;
+    const countParts = [];
+    if (request.targets.aws) countParts.push(`${awsTables.length} AWS table(s)`);
+    if (request.targets.adb) countParts.push(`${adbCompartments.length} ADB-profile compartment(s)`, `${adbTables.length} live ADB DynamoDB-API table(s)`, `${recentAdbTables.length} recent ADB evidence candidate(s)`);
+    if (request.targets.ndcs) countParts.push(`${ndcsCompartments.length} NoSQL-profile compartment(s)`, `${nosqlTables.length} OCI NoSQL table(s)`);
+    const manualNote = !request.probeAdbTables && request.targets.adb ? recentAdbTables.length ? " ADB live probing was not requested; locally evidenced candidates must still pass benchmark preflight." : " ADB live probing was not requested; enter the exact DynamoDB-API table name manually." : "";
+    $("runner-status").className = `callout${mismatch || partialErrors.length ? " warning" : ""}`; $("runner-status").innerHTML = `<b>${partialErrors.length ? "Partial lookup complete." : "Lookup complete."}</b> ${countParts.join(", ")}.${manualNote}${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}${errorList}`;
   } catch (error) { console.error("Destination lookup failed", { stage, error }); $("runner-status").className = "callout error"; $("runner-status").textContent = `Destination lookup failed during ${stage}: ${error?.message || String(error)}`; }
   finally { if (manageButton) $("discover-destinations").disabled = false; }
 }
@@ -265,7 +294,7 @@ for (const id of ["cloud-aws", "cloud-oci"]) $(id).addEventListener("change", ()
 $("adb-enabled").addEventListener("change", syncCloudCatalog);
 document.querySelectorAll("[data-go-step]").forEach(button => button.addEventListener("click", () => showStep(Number(button.dataset.goStep))));
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
-for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => syncManual(prefix));
+for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => { syncManual(prefix); renderDestinationDetails(); });
 $("adb-table-manual").addEventListener("input", () => localStorage.setItem("kvs-dashboard-adb-table", value("adb-table-manual")));
 document.querySelectorAll(".option-search").forEach(input => input.addEventListener("input", () => filterOptions(input)));
 document.querySelectorAll('#live-series-controls input').forEach(input => input.addEventListener("change", renderLiveCharts));

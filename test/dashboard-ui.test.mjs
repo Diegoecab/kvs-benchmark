@@ -67,8 +67,16 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(app, /ndcsOciProfile: value\("ndcs-profile"\)/);
   assert.match(app, /probeAdbTables: \$\("adb-live-table-lookup"\)\.checked/);
   assert.match(app, /kvs-dashboard-adb-table/);
+  assert.match(app, /recent local evidence/);
+  assert.match(app, /recentEvidenceTables\?\.adb/);
   assert.match(app, /destinations\.adbCompartments/);
   assert.match(app, /destinations\.ndcsCompartments/);
+  assert.match(html, /id="destination-details"/);
+  assert.match(app, /function renderDestinationDetails/);
+  assert.match(app, /Live provider metadata/);
+  assert.match(app, /Recent local evidence · not live-verified/);
+  assert.match(app, /Autoscaling/);
+  assert.match(theme, /\.resource-detail/);
 });
 
 test("destination option defaults do not collide with Object prototype methods", () => {
