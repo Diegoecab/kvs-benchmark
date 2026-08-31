@@ -23,8 +23,11 @@ test("dashboard defaults to async and exposes live progress and package download
   assert.match(app, /localStorage\.setItem\("kvs-dashboard-run-id"/);
 });
 
-test("dashboard exposes an enabled local test action and model-aware overrides", () => {
-  assert.match(html, /id="start-benchmark"[^>]*>Run local functional test/);
+test("dashboard exposes cloud and local test actions with model-aware overrides", () => {
+  assert.match(html, /id="start-benchmark"[^>]*>Run cloud acceptance test/);
+  assert.match(html, /id="start-smoke"[^>]*>Run local functional test/);
+  assert.match(html, /id="discover-runners"/);
+  assert.match(html, /id="pipeline"/);
   assert.doesNotMatch(html, /Cloud execution adapter pending/);
   assert.match(app, /syncOverrideApplicability/);
 });

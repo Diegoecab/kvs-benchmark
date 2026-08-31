@@ -13,6 +13,17 @@ test("mock doctor is non-mutating and ready offline", async () => {
   assert.equal(report.limitations.includes("Does not create or modify infrastructure"), true);
 });
 
+test("doctor records observed provisioned capacity without failing when a smoke profile does not assert sizing", async () => {
+  const { config } = readConfig(new URL("../configs/smoke.json", import.meta.url));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-doctor-smoke-")), clock = path.join(directory, "clock.txt");
+  fs.writeFileSync(clock, "System time     : 0.000001 seconds fast of NTP time\nLeap status     : Normal\n");
+  const previousRegion = process.env.AWS_REGION; process.env.AWS_REGION = "us-east-1";
+  try {
+    const report = await doctor({ config, target: "aws", table: "fixture", skipNetwork: true, hostEvidence: clock, capacityProvider: { inspect: async () => ({ state: "ACTIVE", capacityMode: "PROVISIONED", read: 20, write: 20, keySchema: [{ AttributeName: "pk", KeyType: "HASH" }, { AttributeName: "sk", KeyType: "RANGE" }], attributeDefinitions: [{ AttributeName: "pk", AttributeType: "S" }, { AttributeName: "sk", AttributeType: "S" }] }) } });
+    const capacity = report.checks.find(value => value.name === "provisioned-capacity"); assert.equal(report.ready, true); assert.equal(capacity.required, false); assert.deepEqual(capacity.detail.observed, { read: 20, write: 20 });
+  } finally { if (previousRegion === undefined) delete process.env.AWS_REGION; else process.env.AWS_REGION = previousRegion; }
+});
+
 test("doctor reports a malformed ADB endpoint without crashing", async () => {
   const { config } = readConfig(new URL("../configs/smoke.json", import.meta.url));
   const report = await doctor({ config, target: "adb", endpoint: "not a URL" });

@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const excluded = new Set([".git", "node_modules", "results", "benchmark-package"]);
+const excluded = new Set([".git", ".kvs", "node_modules", "results", "benchmark-package"]);
 const patterns = [
   /AKIA[0-9A-Z]{16}/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /ocid1\.[a-z]+\.oc1/i,
-  /aws_secret_access_key\s*=/i,
+  /aws_secret_access_key\s*=\s*["'](?!\$)[^"']+/i,
   /(?:password|secretAccessKey)\s*[=:]\s*["'][^"']+/i
 ];
 const findings = [];

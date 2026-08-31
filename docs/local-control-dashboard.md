@@ -9,6 +9,22 @@ npm run dashboard
 
 Open `http://127.0.0.1:4177`. The service binds only to loopback.
 
+The commands are portable across Windows, macOS, and Linux. Cloud acceptance additionally requires `aws`, `oci`, `ssh`, and `scp` in `PATH`, configured AWS/OCI profiles, and the existing OCI runner key exposed only to the local server:
+
+```powershell
+# Windows PowerShell
+$env:KVS_OCI_SSH_KEY = 'C:\path\to\oci-runner-key'
+npm run dashboard
+```
+
+```bash
+# macOS or Linux
+export KVS_OCI_SSH_KEY="$HOME/.ssh/oci-runner-key"
+npm run dashboard
+```
+
+The key path and key contents are never returned to the browser or stored in a run specification.
+
 The five-step wizard covers:
 
 1. AWS and OCI profiles, regions, and existing KVS resources.
@@ -29,7 +45,7 @@ The workload selector is model-aware. `executionMode` and `rateMultiplier` apply
 
 Changing parameters during an accepted benchmark would invalidate direct comparison between providers. A future **exploratory live** mode may change offered rate, concurrency, or read/write mix, but each control change must be timestamped in the event log and the resulting report must be marked non-comparable. Consistency, dataset, payload, retries, and operation semantics should remain immutable for a session.
 
-## Current safe functional test
+## Local functional test
 
 The local smoke test runs for two seconds at 10 reads/s against an in-memory mock target. It uses the production scheduler, metrics, evidence, reporting, and packaging path without invoking a cloud SDK or changing infrastructure.
 
@@ -46,11 +62,29 @@ On completion, **Download benchmark output (.zip)** provides:
 
 The same files remain under `.kvs/runs/<run-id>/`, which is excluded from Git.
 
+## Cloud acceptance test
+
+The cloud acceptance action is a short, fixed safety gate before larger benchmark matrices. It uses only selected existing infrastructure and performs these visible stages:
+
+1. Runner readiness and immutable container-image presence.
+2. Existing table, key-schema, capacity, endpoint, and credential validation.
+3. Canonical 100-key dataset preload after explicit write authorization.
+4. Strong-read certification on AWS DynamoDB, ADB DynamoDB API, and OCI NoSQL.
+5. Cross-target SHA-256 comparison.
+6. Shared UTC T0 assignment with at least 120 seconds of lead time.
+7. Synchronized two-second, 10 reads/s workload on all three regional VMs.
+8. Evidence collection and accounting/configuration/T0 acceptance checks.
+9. Standalone HTML report, evidence index, integrity manifest, and ZIP generation.
+
+The local process is a control plane only. Database calls and latency measurement execute on the selected regional VMs. Cloud acceptance does not create, resize, stop, or delete infrastructure. Preload is the only database mutation and requires the explicit UI checkbox.
+
 ## Current local API
 
 - `GET /api/bootstrap`: safe profile names, workload configurations, defaults, and capabilities.
 - `POST /api/preview`: validates and expands a matrix without contacting providers.
 - `POST /api/local-smoke` with `{"mode":"async"}` or `{"mode":"live"}`: starts the local test.
+- `POST /api/discover-runners`: discovers running regional runners and benchmark evidence buckets using selected profile names.
+- `POST /api/cloud-acceptance`: starts the guarded three-target cloud acceptance pipeline.
 - `GET /api/runs/<run-id>`: current progress and final summary.
 - `GET /api/runs/<run-id>/download`: final HTML-plus-evidence ZIP.
 
@@ -58,7 +92,7 @@ Mutating calls require the per-launch `x-kvs-csrf` token. Only one local smoke r
 
 ## Current scope and safety
 
-- Cloud benchmark execution is not connected to the dashboard yet.
+- The short cloud acceptance pipeline is connected; arbitrary checked-in workload matrices remain a later milestone.
 - Managed infrastructure is plan-intent only; the dashboard cannot run Terraform.
 - No create, update, stop, delete, or teardown operation is available from the UI.
 - The service binds to loopback, applies a restrictive content security policy, and never returns credential values.
@@ -81,7 +115,7 @@ The UI and service stay in `kvs-benchmark`. Optional infrastructure code belongs
 
 ## Next milestones
 
-1. Connect doctors and synchronized execution against existing AWS/OCI resources.
+1. Generalize the validated cloud adapter from fixed acceptance smoke to arbitrary immutable matrix rows and repetitions.
 2. Replace status polling with Server-Sent Events and persist an append-only state/event log for restart recovery.
 3. Add provider metrics, evidence browser, pricing preview, report/package generation, and a teardown inventory that requires explicit approval.
 4. Add an isolated exploratory-live controller with timestamped parameter setpoints and a non-comparable report label.

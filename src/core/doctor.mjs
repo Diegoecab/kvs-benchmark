@@ -84,7 +84,9 @@ export async function doctor({ config, target, table, endpoint, skipNetwork = fa
         check("capacity-mode", observed.capacityMode === "PROVISIONED", observed.capacityMode);
         check("table-schema", schemaMatches(target, observed), { expected: "pk HASH/SHARD + sk RANGE, canonical attributes", observed: target === "ndcs" ? observed.schema : observed.keySchema });
         const fields = target === "ndcs" ? ["read", "write", "storageGB"] : ["read", "write"];
-        check("provisioned-capacity", fields.every(field => Number(observed[field]) === Number(expected?.[field])), { expected, observed: Object.fromEntries(fields.map(field => [field, observed[field]])) });
+        const declared = fields.filter(field => expected?.[field] != null), observedCapacity = Object.fromEntries(fields.map(field => [field, observed[field]]));
+        if (declared.length) check("provisioned-capacity", declared.every(field => Number(observed[field]) === Number(expected[field])), { expected, observed: observedCapacity });
+        else check("provisioned-capacity", true, { expected: "not asserted by workload configuration", observed: observedCapacity }, false);
       } catch (error) { check("table-inspection", false, { name: error.name, message: error.message }); }
       finally { if (!capacityProvider && provider) await provider.close(); }
     }

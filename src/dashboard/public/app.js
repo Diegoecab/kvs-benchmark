@@ -7,6 +7,7 @@ const optionalNumber = id => value(id) === "" ? undefined : Number(value(id));
 let bootstrap = null;
 let lastSpec = null;
 let currentStep = 1;
+let discovered = null;
 
 function selected(select, preferred) { if (!select.options.length) return; ([...select.options].find(option => option.value === preferred) || select.options[0]).selected = true; }
 function profiles(select, values, preferred) { select.replaceChildren(...values.map(item => new Option(item, item))); selected(select, preferred); }
@@ -37,6 +38,7 @@ async function load() {
   if (!response.ok) throw new Error(`Bootstrap failed (${response.status})`);
   bootstrap = await response.json();
   profiles($("aws-profile"), bootstrap.profiles.aws, "dynamodb_poc"); profiles($("adb-profile"), bootstrap.profiles.oci, "PITWALL_API"); profiles($("ndcs-profile"), bootstrap.profiles.oci, "PITWALL_API");
+  $("image-digest").value = bootstrap.defaults.imageDigest || "";
   renderConfigs(bootstrap.configs); syncOverrideApplicability();
   $("warnings").innerHTML = bootstrap.profiles.warnings.map(item => `<div class="callout warning">${escapeHtml(item)}</div>`).join("");
   $("connection").textContent = `${bootstrap.profiles.aws.length} AWS | ${bootstrap.profiles.oci.length} OCI profiles`; $("connection").className = "status ok";
@@ -44,11 +46,30 @@ async function load() {
 }
 
 function runMode() { return document.querySelector('input[name="run-mode"]:checked').value; }
+function selectedRunner(id) { return discovered?.oci?.find(item => item.id === value(id)) || discovered?.aws?.find(item => item.id === value(id)) || {}; }
 function specification() {
   const mode = document.querySelector('input[name="infra-mode"]:checked').value;
   const overrides = { durationSeconds: optionalNumber("duration"), readPercent: optionalNumber("read-percent"), writePercent: optionalNumber("write-percent"), rateMultiplier: optionalNumber("rate-multiplier"), fixedConcurrency: optionalNumber("fixed-concurrency"), consistency: value("consistency") || undefined, executionMode: value("execution-mode") || undefined };
   Object.keys(overrides).forEach(key => overrides[key] === undefined && delete overrides[key]);
-  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: $("aws-enabled").checked, profile: value("aws-profile"), region: value("aws-region"), resource: value("aws-table") }, adb: { enabled: $("adb-enabled").checked, profile: value("adb-profile"), region: value("adb-region"), resource: value("adb-table") }, ndcs: { enabled: $("ndcs-enabled").checked, profile: value("ndcs-profile"), region: value("ndcs-region"), resource: value("ndcs-table") } }, configs: [...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value), repetitions: Number(value("repetitions")), overrides, execution: { mode: runMode(), mutableParameters: false } };
+  const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
+  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: $("aws-enabled").checked, profile: value("aws-profile"), region: value("aws-region"), resource: value("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: $("adb-enabled").checked, profile: value("adb-profile"), region: value("adb-region"), resource: value("adb-table"), runnerId: value("adb-runner"), runnerHost: adbRunner.publicIp, compartmentId: adbRunner.compartmentId }, ndcs: { enabled: $("ndcs-enabled").checked, profile: value("ndcs-profile"), region: value("ndcs-region"), resource: value("ndcs-table"), runnerId: value("ndcs-runner"), runnerHost: ndcsRunner.publicIp, compartmentId: ndcsRunner.compartmentId } }, configs: [...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value), repetitions: Number(value("repetitions")), overrides, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
+}
+
+function runnerOptions(select, values, preferredPattern) {
+  select.replaceChildren(new Option("Select a discovered runner", ""), ...values.map(item => new Option(`${item.name} | ${item.placement || "unknown"} | ${item.remoteControl}`, item.id)));
+  const preferred = values.find(item => preferredPattern.test(item.name)); if (preferred) select.value = preferred.id;
+}
+
+async function discoverRunners() {
+  $("discover-runners").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Checking cloud identities, running instances, remote-control health, placement, and evidence buckets...";
+  try {
+    const response = await fetch("/api/discover-runners", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify({ awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile: value("adb-profile"), ociRegion: value("adb-region") }) });
+    discovered = await response.json(); if (!response.ok) throw new Error(discovered.error || `Discovery failed (${response.status})`);
+    runnerOptions($("aws-runner"), discovered.aws, /aws.*runner|runner.*aws/i); runnerOptions($("adb-runner"), discovered.oci, /adb.*runner/i); runnerOptions($("ndcs-runner"), discovered.oci, /ndcs|nosql/i);
+    $("artifact-bucket").replaceChildren(new Option("Select an evidence bucket", ""), ...(discovered.artifactBuckets || []).map(name => new Option(name, name))); if (discovered.artifactBuckets?.length === 1) $("artifact-bucket").value = discovered.artifactBuckets[0];
+    $("runner-status").className = "callout"; $("runner-status").innerHTML = `<b>Discovery complete.</b> ${discovered.aws.length} AWS and ${discovered.oci.length} OCI runner(s); ${discovered.artifactBuckets?.length || 0} evidence bucket(s).`;
+  } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error.message; }
+  finally { $("discover-runners").disabled = false; }
 }
 
 function renderReview() {
@@ -85,10 +106,13 @@ function downloadSpec() { const blob = new Blob([`${JSON.stringify(lastSpec, nul
 
 function showSmoke(run) {
   const progress = run.progress || {}; const terminal = ["complete", "failed"].includes(run.status); const latency = run.summary?.successfulServiceLatencyMs || {};
-  $("smoke-status").className = `callout${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)} | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
-  const values = [["Completed", progress.completed ?? 0], ["Failed", progress.failed ?? 0], ["Current ops/s", progress.achievedOperationsPerSecond ?? run.summary?.achievedOperationsPerSecond], ["In flight", progress.inFlight ?? 0], ["Latest latency ms", progress.latestLatencyMs], ["Final P95 ms", latency.p95]];
+  const accounting = run.kind === "cloud-acceptance" ? ` | shared T0 ${escapeHtml(run.sharedStartAt || "pending")}` : ` | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted`;
+  $("smoke-status").className = `callout${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
+  $("pipeline").innerHTML = (run.stages || []).map(stage => `<div class="pipeline-stage ${escapeHtml(stage.status)}"><span>${escapeHtml(stage.status)}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b><small>${escapeHtml(stage.detail || "Waiting")}</small></div>`).join("");
+  const cloudCompleted = run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.completed, 0) : null;
+  const values = [["Completed", cloudCompleted ?? progress.completed ?? 0], ["Failed", progress.failed ?? (run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.failed, 0) : 0)], ["Current ops/s", progress.achievedOperationsPerSecond ?? run.summary?.achievedOperationsPerSecond], ["In flight", progress.inFlight ?? 0], ["Latest latency ms", progress.latestLatencyMs], ["Final P95 ms", latency.p95]];
   $("live-stats").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join("");
-  $("smoke-detail").textContent = JSON.stringify({ mode: run.mode, status: run.status, startedAt: run.startedAt, completedAt: run.completedAt, evidence: run.output, latestOperation: progress.latestOperation, latestError: progress.latestError }, null, 2);
+  $("smoke-detail").textContent = JSON.stringify({ kind: run.kind, mode: run.mode, status: run.status, startedAt: run.startedAt, completedAt: run.completedAt, targetStatus: run.targetStatus, certificates: run.certificates, summaries: run.summaries, evidence: run.output, latestOperation: progress.latestOperation, latestError: progress.latestError }, null, 2);
   $("download-output").classList.toggle("hidden", !run.downloadUrl); if (run.downloadUrl) $("download-output").href = run.downloadUrl;
   $("start-smoke").disabled = !terminal; $("start-benchmark").disabled = !terminal; if (terminal) localStorage.removeItem("kvs-dashboard-run-id");
 }
@@ -104,9 +128,15 @@ async function startSmoke() {
   catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("start-smoke").disabled = false; $("start-benchmark").disabled = false; }
 }
 
+async function startCloud() {
+  $("start-smoke").disabled = true; $("start-benchmark").disabled = true; $("download-output").classList.add("hidden"); $("smoke-status").className = "callout"; $("smoke-status").textContent = "Submitting cloud acceptance pipeline...";
+  try { const spec = specification(); const response = await fetch("/api/cloud-acceptance", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(spec) }); const run = await response.json(); if (!response.ok) throw new Error(run.error || `Start failed (${response.status})`); localStorage.setItem("kvs-dashboard-run-id", run.id); showSmoke(run); await monitorRun(run.id, runMode()); }
+  catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("start-smoke").disabled = false; $("start-benchmark").disabled = false; }
+}
+
 document.querySelectorAll('input[name="infra-mode"]').forEach(input => input.addEventListener("change", () => $("managed-fields").classList.toggle("hidden", document.querySelector('input[name="infra-mode"]:checked').value !== "managed")));
 document.querySelectorAll("[data-go-step]").forEach(button => button.addEventListener("click", () => showStep(Number(button.dataset.goStep))));
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
-$("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startSmoke); $("refresh").addEventListener("click", () => load().catch(showLoadError));
+$("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-runners").addEventListener("click", discoverRunners); $("refresh").addEventListener("click", () => load().catch(showLoadError));
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
 showStep(1); load().catch(showLoadError);

@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { discoverProfiles } from "./profiles.mjs";
 import { listBenchmarkConfigs, previewMatrix } from "./preview.mjs";
 import { LocalSmokeRuns } from "./local-smoke.mjs";
+import { discoverRegionalRunners } from "./remote-control.mjs";
+import { CloudAcceptanceRuns, defaultImage } from "./cloud-acceptance.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const publicDirectory = path.join(moduleDirectory, "public");
@@ -30,29 +32,39 @@ function safeAsset(urlPath) {
   return file.startsWith(publicDirectory + path.sep) ? file : null;
 }
 
-export function createDashboardServer({ token = crypto.randomBytes(24).toString("base64url"), profileDiscovery = discoverProfiles, localSmokeRuns = new LocalSmokeRuns() } = {}) {
+export function createDashboardServer({ token = crypto.randomBytes(24).toString("base64url"), profileDiscovery = discoverProfiles, runnerDiscovery = discoverRegionalRunners, localSmokeRuns = new LocalSmokeRuns(), cloudRuns = new CloudAcceptanceRuns() } = {}) {
+  const findRun = id => { try { return localSmokeRuns.get(id); } catch { return cloudRuns.get(id); } };
+  const findDownload = id => { try { return localSmokeRuns.download(id); } catch { return cloudRuns.download(id); } };
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url, "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/api/bootstrap") {
         const profiles = await profileDiscovery();
-        return json(response, 200, { schemaVersion: 1, csrfToken: token, profiles, configs: listBenchmarkConfigs(configDirectory), capabilities: { existingInfrastructure: true, managedInfrastructure: false, cloudExecution: false, localMockExecution: true, liveProgress: true }, defaults: { awsRegion: "us-east-1", ociRegion: "us-ashburn-1" } });
+        return json(response, 200, { schemaVersion: 1, csrfToken: token, profiles, configs: listBenchmarkConfigs(configDirectory), capabilities: { existingInfrastructure: true, managedInfrastructure: false, cloudExecution: true, cloudSshConfigured: Boolean(cloudRuns.keyFile), localMockExecution: true, liveProgress: true }, defaults: { awsRegion: "us-east-1", ociRegion: "us-ashburn-1", imageDigest: defaultImage } });
       }
       if (request.method === "POST" && url.pathname === "/api/preview") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
         return json(response, 200, previewMatrix(await body(request), { configDirectory }));
       }
+      if (request.method === "POST" && url.pathname === "/api/discover-runners") {
+        if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
+        return json(response, 200, await runnerDiscovery(await body(request)));
+      }
       if (request.method === "POST" && url.pathname === "/api/local-smoke") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
         return json(response, 202, localSmokeRuns.start(await body(request)));
       }
+      if (request.method === "POST" && url.pathname === "/api/cloud-acceptance") {
+        if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
+        return json(response, 202, cloudRuns.start(await body(request)));
+      }
       if (request.method === "GET" && /^\/api\/runs\/[^/]+\/download$/.test(url.pathname)) {
-        const id = decodeURIComponent(url.pathname.split("/")[3]), file = localSmokeRuns.download(id), stat = fs.statSync(file);
+        const id = decodeURIComponent(url.pathname.split("/")[3]), file = findDownload(id), stat = fs.statSync(file);
         response.writeHead(200, { "content-type": "application/zip", "content-length": stat.size, "content-disposition": `attachment; filename="${path.basename(file)}"`, "cache-control": "no-store", "x-content-type-options": "nosniff" });
         return fs.createReadStream(file).pipe(response);
       }
       if (request.method === "GET" && url.pathname.startsWith("/api/runs/")) {
-        return json(response, 200, localSmokeRuns.get(decodeURIComponent(url.pathname.slice("/api/runs/".length))));
+        return json(response, 200, findRun(decodeURIComponent(url.pathname.slice("/api/runs/".length))));
       }
       if (url.pathname.startsWith("/api/")) return json(response, 404, { error: "Unknown API route" });
       if (request.method !== "GET") return json(response, 405, { error: "Method not allowed" });
