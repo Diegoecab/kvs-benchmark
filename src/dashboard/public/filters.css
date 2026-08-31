@@ -1,0 +1,19 @@
+.option-search {
+  padding: .48rem .65rem;
+  background: #f8fafc;
+  font-size: .78rem;
+}
+
+.target-live {
+  flex: 1 1 100%;
+  padding: .85rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+
+.target-live h4 {
+  margin: 0;
+  color: var(--navy);
+}
+.cloud-catalog{display:flex;gap:1rem;margin:1rem 0}.cloud-catalog>label{min-width:190px;border:1px solid #d8e0ea;border-radius:12px;padding:.8rem;background:#fff;display:flex;align-items:flex-start;gap:.6rem;cursor:pointer}.cloud-catalog span{display:flex;flex-direction:column;gap:.2rem}.cloud-catalog small{color:#667388}.provider.cloud-hidden{display:none}

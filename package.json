@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Reproducible KV benchmark for AWS DynamoDB, ADB DynamoDB API, and OCI NoSQL",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "benchmark": "node src/cli.mjs run",
     "report": "node src/cli.mjs report",
@@ -18,6 +20,8 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.864.0",
     "@smithy/node-http-handler": "^4.1.5",
+    "oci-common": "^2.140.0",
+    "oci-objectstorage": "^2.140.0",
     "oracle-nosqldb": "^5.4.7"
   }
 }

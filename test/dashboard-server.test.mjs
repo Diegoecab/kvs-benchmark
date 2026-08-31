@@ -6,9 +6,9 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   const smoke = { id: "smoke-test", mode: "async", status: "complete", progress: { scheduled: 20, accounted: 20, completed: 20, failed: 0 }, summary: { harnessPassed: true } };
   const cloud = { id: "cloud-test", kind: "cloud-acceptance", status: "queued", stages: [] };
   const localSmokeRuns = { start: options => { assert.equal(options.mode, "async"); return smoke; }, get: id => { if (id !== smoke.id) throw new Error("not local"); return smoke; } };
-  const cloudRuns = { keyFile: "configured", start: options => { assert.equal(options.writeAuthorization, true); return cloud; }, get: id => { assert.equal(id, cloud.id); return cloud; } };
+  const cloudRuns = { start: options => { assert.equal(options.writeAuthorization, true); return cloud; }, get: id => { assert.equal(id, cloud.id); return cloud; } };
   const runnerDiscovery = async options => { assert.equal(options.awsProfile, "dynamodb_poc"); return { aws: [], oci: [], artifactBuckets: [] }; };
-  const destinationDiscovery = async options => { assert.equal(options.keyFile, "configured"); return { awsTables: ["table"], compartments: [] }; };
+  const destinationDiscovery = async options => { assert.deepEqual(options, {}); return { awsTables: ["table"], compartments: [] }; };
   const { server, token } = createDashboardServer({ profileDiscovery: async () => ({ aws: ["dynamodb_poc"], oci: ["PITWALL_API"], warnings: [], sources: {} }), runnerDiscovery, destinationDiscovery, localSmokeRuns, cloudRuns });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   t.after(() => new Promise(resolve => server.close(resolve)));
@@ -17,7 +17,8 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   assert.deepEqual(bootstrap.profiles.aws, ["dynamodb_poc"]);
   assert.equal(bootstrap.capabilities.localMockExecution, true);
   assert.equal(bootstrap.capabilities.cloudExecution, true);
-  assert.equal(bootstrap.capabilities.cloudSshConfigured, true);
+  assert.equal(bootstrap.capabilities.ociRunCommand, true);
+  assert.equal(bootstrap.capabilities.providerNativeEvidence, true);
   const denied = await fetch(`${origin}/api/preview`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   assert.equal(denied.status, 403);
   const invalid = await fetch(`${origin}/api/preview`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: "{}" });

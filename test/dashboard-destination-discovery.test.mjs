@@ -9,13 +9,15 @@ test("destination lookup returns full compartment paths and provider table inven
     if (file === "oci" && args[0] === "iam") return JSON.stringify({ data: [{ id: parent, name: "team", "compartment-id": tenancy, "lifecycle-state": "ACTIVE" }, { id: child, name: "benchmark", "compartment-id": parent, "lifecycle-state": "ACTIVE" }] });
     if (file === "oci" && args[0] === "db") return JSON.stringify({ data: [{ id: "ocid1.autonomousdatabase.test", "display-name": "adb", "db-name": "ADB", "lifecycle-state": "AVAILABLE", "compute-count": 2 }] });
     if (file === "oci" && args[0] === "nosql") return JSON.stringify({ data: { items: [{ id: "ocid1.nosqltable.test", name: "kv", "lifecycle-state": "ACTIVE", "table-limits": { "max-read-units": 40, "max-write-units": 30, "max-storage-in-g-bs": 1 } }] } });
+    if (file === "oci" && args[0] === "os") return JSON.stringify({ data: [{ name: "kvs-evidence" }] });
     throw new Error(`Unexpected ${file} ${args.join(" ")}`);
   };
-  const result = await discoverDestinations({ awsProfile: "aws", ociProfile: "oci", adbCompartmentId: child, ndcsCompartmentId: child, adbRunnerHost: "203.0.113.1", keyFile: "ignored", executeCommand, profileReader: async () => ({ tenancy }), adbTableReader: async () => ({ tableNames: ["ddb_api"], databaseId: "ocid1.autonomousdatabase.test" }) });
+  const result = await discoverDestinations({ awsProfile: "aws", ociProfile: "oci", adbCompartmentId: child, ndcsCompartmentId: child, adbRunnerId: "ocid1.instance.test", adbRunnerCompartmentId: child, executeCommand, profileReader: async () => ({ tenancy }), adbTableReader: async () => ({ tableNames: ["ddb_api"], databaseId: "ocid1.autonomousdatabase.test" }) });
   assert.deepEqual(result.awsTables, ["a-table", "z-table"]); assert.equal(result.compartments.find(item => item.id === child).path, "tenancy root / team / benchmark");
   assert.equal(result.adbCompartments.find(item => item.id === child).path, "tenancy root / team / benchmark"); assert.equal(result.ndcsCompartments.find(item => item.id === child).path, "tenancy root / team / benchmark");
   assert.equal(result.autonomousDatabases[0].name, "adb"); assert.deepEqual(result.adbTables, ["ddb_api"]); assert.equal(result.adbRuntimeDatabaseId, "ocid1.autonomousdatabase.test");
   assert.deepEqual(result.nosqlTables[0], { id: "ocid1.nosqltable.test", name: "kv", state: "ACTIVE", readUnits: 40, writeUnits: 30, storageGB: 1 });
+  assert.deepEqual(result.adbEvidenceBuckets, ["kvs-evidence"]); assert.deepEqual(result.ndcsEvidenceBuckets, ["kvs-evidence"]);
 });
 
 test("ADB and OCI NoSQL destination lookup use their independently selected profiles", async () => {
@@ -25,6 +27,7 @@ test("ADB and OCI NoSQL destination lookup use their independently selected prof
     if (args[0] === "iam") return JSON.stringify({ data: [] });
     if (args[0] === "db") return JSON.stringify({ data: [] });
     if (args[0] === "nosql") return JSON.stringify({ data: { items: [] } });
+    if (args[0] === "os") return JSON.stringify({ data: [] });
     throw new Error(`Unexpected ${file} ${args.join(" ")}`);
   };
   const result = await discoverDestinations({

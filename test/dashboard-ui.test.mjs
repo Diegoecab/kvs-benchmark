@@ -20,6 +20,12 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(app, /presetRepetitions/);
   assert.match(html, /id="select-recommended"/);
   assert.match(app, /function selectPresets/);
+  assert.ok((html.match(/class="option-search"/g) || []).length >= 8);
+  assert.match(app, /function filterOptions/);
+  assert.match(html, /private S3 bucket/);
+  assert.match(html, /id="cloud-aws"/); assert.match(html, /id="cloud-oci"/);
+  assert.match(html, /No SSH, SCP, private key, or public IP is used/);
+  assert.match(html, /Provisional performance timeline/); assert.match(app, /function renderLiveCharts/);
 });
 
 test("dashboard defaults to async and exposes live progress and package download", () => {
@@ -31,13 +37,13 @@ test("dashboard defaults to async and exposes live progress and package download
 });
 
 test("dashboard exposes cloud and local test actions with model-aware overrides", () => {
-  assert.match(html, /id="start-benchmark"[^>]*>Run cloud acceptance test/);
+  assert.match(html, /id="start-benchmark"[^>]*>Run selected cloud benchmark/);
   assert.match(html, /id="start-smoke"[^>]*>Run local functional test/);
   assert.match(html, /id="discover-runners"/);
   assert.match(html, /id="lookup-destinations"/);
   assert.match(html, /id="adb-compartment"/);
   assert.match(html, /id="ndcs-compartment"/);
-  assert.match(html, /one, two, or three enabled targets/);
+  assert.match(html, /against any enabled targets/i);
   assert.match(html, /id="pipeline"/);
   assert.doesNotMatch(html, /Cloud execution adapter pending/);
   assert.match(app, /syncOverrideApplicability/);

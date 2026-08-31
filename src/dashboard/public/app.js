@@ -9,6 +9,8 @@ let lastSpec = null;
 let currentStep = 1;
 let discovered = null;
 let destinations = null;
+let liveChartSession = null;
+let liveChartSamples = [];
 
 function selected(select, preferred) { if (!select.options.length) return; ([...select.options].find(option => option.value === preferred) || select.options[0]).selected = true; }
 function profiles(select, values, preferred) { select.replaceChildren(...values.map(item => new Option(item, item))); selected(select, preferred); }
@@ -53,6 +55,12 @@ async function load() {
 }
 
 function runMode() { return document.querySelector('input[name="run-mode"]:checked').value; }
+const cloudEnabled = name => $(`cloud-${name}`).checked;
+function syncCloudCatalog() {
+  document.querySelector("article.provider.aws").classList.toggle("cloud-hidden", !cloudEnabled("aws"));
+  for (const selector of ["article.provider.adb", "article.provider.ndcs"]) document.querySelector(selector).classList.toggle("cloud-hidden", !cloudEnabled("oci"));
+  $("aws-enabled").disabled = !cloudEnabled("aws"); $("adb-enabled").disabled = !cloudEnabled("oci"); $("ndcs-enabled").disabled = !cloudEnabled("oci");
+}
 function selectedRunner(id) { return discovered?.oci?.find(item => item.id === value(id)) || discovered?.aws?.find(item => item.id === value(id)) || {}; }
 function resourceValue(prefix) { return value(prefix) === "__manual__" ? value(`${prefix}-manual`) : value(prefix); }
 function specification() {
@@ -63,7 +71,7 @@ function specification() {
   const configs = [...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value);
   const repetitionsByFile = Object.fromEntries([...document.querySelectorAll(".preset-repetitions")].map(input => [input.dataset.config, Number(input.value)]));
   const presetRepetitions = Object.fromEntries(configs.map(file => [file, repetitionsByFile[file] || 1]));
-  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: $("aws-enabled").checked, profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: $("adb-enabled").checked, profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerHost: adbRunner.publicIp, compartmentId: value("adb-compartment") }, ndcs: { enabled: $("ndcs-enabled").checked, profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerHost: ndcsRunner.publicIp, compartmentId: value("ndcs-compartment") } }, configs, presetRepetitions, overrides, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
+  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: cloudEnabled("aws") && $("aws-enabled").checked, profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: cloudEnabled("oci") && $("adb-enabled").checked, profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerCompartmentId: adbRunner.compartmentId, compartmentId: value("adb-compartment"), evidenceBucket: value("adb-artifact-bucket") }, ndcs: { enabled: cloudEnabled("oci") && $("ndcs-enabled").checked, profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerCompartmentId: ndcsRunner.compartmentId, compartmentId: value("ndcs-compartment"), evidenceBucket: value("ndcs-artifact-bucket") } }, configs, presetRepetitions, overrides, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
 }
 
 function runnerOptions(select, values, preferredPattern) {
@@ -75,10 +83,11 @@ function runnerOptions(select, values, preferredPattern) {
 async function discoverRunners() {
   $("discover-runners").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Checking cloud identities, running instances, remote-control health, placement, and evidence buckets...";
   try {
-    const fetchInventory = async (ociProfile, ociRegion) => { const response = await fetch("/api/discover-runners", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify({ awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile, ociRegion }) }); const result = await response.json(); if (!response.ok) throw new Error(result?.error || `Discovery failed (${response.status})`); return result; };
+    if (!cloudEnabled("aws") && !cloudEnabled("oci")) throw new Error("Select at least one cloud provider");
+    const fetchInventory = async (ociProfile, ociRegion, clouds) => { const response = await fetch("/api/discover-runners", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify({ awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile, ociRegion, clouds }) }); const result = await response.json(); if (!response.ok) throw new Error(result?.error || `Discovery failed (${response.status})`); return result; };
     const adbContext = { profile: value("adb-profile"), region: value("adb-region") }, ndcsContext = { profile: value("ndcs-profile"), region: value("ndcs-region") };
-    const adbResult = await fetchInventory(adbContext.profile, adbContext.region), sameOciContext = adbContext.profile === ndcsContext.profile && adbContext.region === ndcsContext.region;
-    const ndcsResult = sameOciContext ? adbResult : await fetchInventory(ndcsContext.profile, ndcsContext.region);
+    const adbResult = await fetchInventory(adbContext.profile, adbContext.region, { aws: cloudEnabled("aws"), oci: cloudEnabled("oci") }), sameOciContext = adbContext.profile === ndcsContext.profile && adbContext.region === ndcsContext.region;
+    const ndcsResult = !cloudEnabled("oci") || sameOciContext ? adbResult : await fetchInventory(ndcsContext.profile, ndcsContext.region, { aws: false, oci: true });
     const adbOci = Array.isArray(adbResult?.oci) ? adbResult.oci : [], ndcsOci = Array.isArray(ndcsResult?.oci) ? ndcsResult.oci : [];
     discovered = { aws: Array.isArray(adbResult?.aws) ? adbResult.aws : [], adbOci, ndcsOci, oci: [...new Map([...adbOci, ...ndcsOci].map(item => [item.id, item])).values()], artifactBuckets: Array.isArray(adbResult?.artifactBuckets) ? adbResult.artifactBuckets : [] };
     runnerOptions($("aws-runner"), discovered.aws, /aws.*runner|runner.*aws/i); runnerOptions($("adb-runner"), discovered.adbOci, /adb.*runner/i); runnerOptions($("ndcs-runner"), discovered.ndcsOci, /ndcs|nosql/i);
@@ -99,6 +108,7 @@ function lookupOptions(select, items, { label = item => item?.name || item, getV
 }
 
 function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) !== "__manual__"; }
+function filterOptions(input) { const select = $(input.dataset.filterFor), query = input.value.trim().toLowerCase(); if (!select) return; for (const option of select.options) option.hidden = Boolean(query) && option.value !== select.value && !option.textContent.toLowerCase().includes(query); }
 
 async function lookupDestinations() {
   $("lookup-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Reading accessible OCI compartments and available tables without modifying them...";
@@ -113,7 +123,7 @@ async function lookupDestinations() {
     stage = "request preparation";
     const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
     const previous = { awsTable: resourceValue("aws-table"), adbTable: resourceValue("adb-table"), ndcsTable: resourceValue("ndcs-table") };
-    const request = { awsProfile: value("aws-profile"), awsRegion: value("aws-region"), adbOciProfile: value("adb-profile"), adbOciRegion: value("adb-region"), ndcsOciProfile: value("ndcs-profile"), ndcsOciRegion: value("ndcs-region"), adbCompartmentId: value("adb-compartment") || adbRunner.compartmentId, ndcsCompartmentId: value("ndcs-compartment") || ndcsRunner.compartmentId, adbRunnerHost: adbRunner.publicIp, targets: { aws: $("aws-enabled").checked, adb: $("adb-enabled").checked, ndcs: $("ndcs-enabled").checked } };
+    const request = { awsProfile: value("aws-profile"), awsRegion: value("aws-region"), adbOciProfile: value("adb-profile"), adbOciRegion: value("adb-region"), ndcsOciProfile: value("ndcs-profile"), ndcsOciRegion: value("ndcs-region"), adbCompartmentId: value("adb-compartment") || adbRunner.compartmentId, ndcsCompartmentId: value("ndcs-compartment") || ndcsRunner.compartmentId, adbRunnerId: adbRunner.id, adbRunnerCompartmentId: adbRunner.compartmentId, targets: { aws: cloudEnabled("aws") && $("aws-enabled").checked, adb: cloudEnabled("oci") && $("adb-enabled").checked, ndcs: cloudEnabled("oci") && $("ndcs-enabled").checked } };
     stage = "cloud inventory request";
     const response = await fetch("/api/discover-destinations", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(request) });
     const result = await response.json(); if (!response.ok) throw new Error(result?.error || `Destination lookup failed (${response.status})`);
@@ -133,6 +143,9 @@ async function lookupDestinations() {
     lookupOptions($("adb-table"), adbTables, { getValue: item => item, label: item => item, placeholder: "Select a DynamoDB-API table", manual: true, preferred: previous.adbTable });
     stage = "OCI NoSQL table rendering";
     lookupOptions($("ndcs-table"), nosqlTables, { label: item => `${item.name} | ${item.state} | ${item.readUnits ?? "?"} RU / ${item.writeUnits ?? "?"} WU`, getValue: item => item.name, placeholder: "Select an OCI NoSQL table", manual: true, preferred: previous.ndcsTable });
+    stage = "evidence bucket rendering";
+    lookupOptions($("adb-artifact-bucket"), destinations.adbEvidenceBuckets, { getValue: item => item, label: item => item, placeholder: "Select an ADB evidence bucket", preferred: value("adb-artifact-bucket") });
+    lookupOptions($("ndcs-artifact-bucket"), destinations.ndcsEvidenceBuckets, { getValue: item => item, label: item => item, placeholder: "Select a NoSQL evidence bucket", preferred: value("ndcs-artifact-bucket") });
     stage = "manual destination synchronization";
     for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
     const mismatch = destinations.adbRuntimeDatabaseId && value("adb-database") !== destinations.adbRuntimeDatabaseId;
@@ -173,14 +186,45 @@ async function preview() {
 
 function downloadSpec() { const blob = new Blob([`${JSON.stringify(lastSpec, null, 2)}\n`], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `kvs-run-spec-${new Date().toISOString().replace(/[:.]/g, "-")}.json`; link.click(); URL.revokeObjectURL(link.href); }
 
+const chartColors = { aws: "#ef7d00", adb: "#7b3fc6", ndcs: "#008c95", offered: "#3f4b5f" };
+function enabledSeries() { return new Set([...document.querySelectorAll('#live-series-controls input:checked')].map(input => input.value)); }
+function drawChart(canvas, series, emptyText) {
+  const context = canvas.getContext("2d"), width = canvas.width, height = canvas.height, margin = { left: 54, right: 18, top: 16, bottom: 34 };
+  context.clearRect(0, 0, width, height); context.fillStyle = "#fff"; context.fillRect(0, 0, width, height);
+  const active = series.filter(item => enabledSeries().has(item.name) && item.values.some(value => Number.isFinite(value)));
+  if (!active.length) { context.fillStyle = "#68758a"; context.font = "14px system-ui"; context.fillText(emptyText, 24, 42); return; }
+  const maximum = Math.max(1, ...active.flatMap(item => item.values.filter(Number.isFinite))) * 1.1, points = Math.max(2, ...active.map(item => item.values.length));
+  context.strokeStyle = "#dfe5ed"; context.fillStyle = "#68758a"; context.font = "12px system-ui"; context.textAlign = "right";
+  for (let tick = 0; tick <= 4; tick += 1) { const y = margin.top + (height - margin.top - margin.bottom) * tick / 4; context.beginPath(); context.moveTo(margin.left, y); context.lineTo(width - margin.right, y); context.stroke(); context.fillText(number(maximum * (4 - tick) / 4), margin.left - 8, y + 4); }
+  for (const item of active) { context.strokeStyle = chartColors[item.name]; context.lineWidth = item.name === "offered" ? 2 : 3; context.setLineDash(item.name === "offered" ? [8, 5] : []); context.beginPath(); item.values.forEach((value, index) => { if (!Number.isFinite(value)) return; const x = margin.left + (width - margin.left - margin.right) * index / (points - 1), y = height - margin.bottom - (height - margin.top - margin.bottom) * value / maximum; if (index === 0) context.moveTo(x, y); else context.lineTo(x, y); }); context.stroke(); }
+  context.setLineDash([]); context.fillStyle = "#68758a"; context.textAlign = "center"; context.fillText(`0 s`, margin.left, height - 10); context.fillText(`${Math.max(0, liveChartSamples.length - 1)} samples`, width - margin.right, height - 10);
+}
+function renderLiveCharts() {
+  const targets = ["aws", "adb", "ndcs"];
+  drawChart($("throughput-chart"), [...targets.map(name => ({ name, values: liveChartSamples.map(sample => sample[name]?.operationsPerSecond) })), { name: "offered", values: liveChartSamples.map(sample => sample.offered) }], "Waiting for throughput samples...");
+  drawChart($("latency-chart"), targets.map(name => ({ name, values: liveChartSamples.map(sample => sample[name]?.rollingP95Ms) })), "Waiting for latency samples...");
+}
+function captureLiveSample(run) {
+  const sessionId = run.currentSession?.id; if (!sessionId) return;
+  if (liveChartSession !== sessionId) { liveChartSession = sessionId; liveChartSamples = []; }
+  const metrics = run.targetMetrics || {}, sampleAt = Object.values(metrics).map(item => item.at).filter(Boolean).sort().at(-1);
+  if (!sampleAt || liveChartSamples.at(-1)?.at === sampleAt) return;
+  liveChartSamples.push({ at: sampleAt, offered: run.currentSession.offeredOperationsPerSecond, ...metrics });
+  if (liveChartSamples.length > 600) liveChartSamples.shift();
+  $("live-chart-caption").textContent = `${sessionId} | ${run.currentSession.durationSeconds} s | ${number(run.currentSession.offeredOperationsPerSecond)} offered ops/s | ${liveChartSamples.length} sample(s)`;
+  renderLiveCharts();
+}
+
 function showSmoke(run) {
   const progress = run.progress || {}; const terminal = ["complete", "failed"].includes(run.status); const latency = run.summary?.successfulServiceLatencyMs || {};
-  const accounting = run.kind === "cloud-acceptance" ? ` | shared T0 ${escapeHtml(run.sharedStartAt || "pending")}` : ` | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted`;
+  const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", session = run.currentSession;
+  const accounting = cloud ? ` | ${session ? `session ${escapeHtml(session.id)} (${session.index}/${session.total}) | ` : ""}shared T0 ${escapeHtml(run.sharedStartAt || "pending")}` : ` | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted`;
   $("smoke-status").className = `callout${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
   $("pipeline").innerHTML = (run.stages || []).map(stage => `<div class="pipeline-stage ${escapeHtml(stage.status)}"><span>${escapeHtml(stage.status)}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b><small>${escapeHtml(stage.detail || "Waiting")}</small></div>`).join("");
-  const cloudCompleted = run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.completed, 0) : null;
-  const values = [["Completed", cloudCompleted ?? progress.completed ?? 0], ["Failed", progress.failed ?? (run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.failed, 0) : 0)], ["Current ops/s", progress.achievedOperationsPerSecond ?? run.summary?.achievedOperationsPerSecond], ["In flight", progress.inFlight ?? 0], ["Latest latency ms", progress.latestLatencyMs], ["Final P95 ms", latency.p95]];
-  $("live-stats").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join("");
+  const targetMetrics = run.targetMetrics || {};
+  const showLiveChart = cloud && run.mode === "live" && ["running", "complete"].includes(run.status); $("live-chart-panel").classList.toggle("hidden", !showLiveChart); if (showLiveChart) captureLiveSample(run);
+  if (cloud && Object.keys(targetMetrics).length) $("live-stats").innerHTML = Object.entries(targetMetrics).map(([target, metric]) => `<div class="target-live provider-${escapeHtml(target)}"><h4>${escapeHtml(target.toUpperCase())}${metric.provisional ? " · LIVE PREVIEW" : " · FINAL"}</h4><div class="stats"><div class="stat"><span>Completed</span><b>${number(metric.completed)}</b></div><div class="stat"><span>Failed</span><b>${number(metric.failed)}</b></div><div class="stat"><span>Ops/s</span><b>${number(metric.operationsPerSecond)}</b></div><div class="stat"><span>In flight</span><b>${number(metric.inFlight)}</b></div><div class="stat"><span>Latest latency ms</span><b>${number(metric.latestLatencyMs)}</b></div><div class="stat"><span>${metric.provisional ? "Rolling P95 ms" : "Final P95 ms"}</span><b>${number(metric.rollingP95Ms ?? metric.p95)}</b></div><div class="stat"><span>Final P99 ms</span><b>${number(metric.p99)}</b></div><div class="stat"><span>Final max ms</span><b>${number(metric.max)}</b></div></div></div>`).join("");
+  else { const cloudCompleted = run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.completed, 0) : null; const values = [["Completed", cloudCompleted ?? progress.completed ?? 0], ["Failed", progress.failed ?? (run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.failed, 0) : 0)], ["Current ops/s", progress.achievedOperationsPerSecond ?? run.summary?.achievedOperationsPerSecond], ["In flight", progress.inFlight ?? 0], ["Latest latency ms", progress.latestLatencyMs], ["Final P95 ms", latency.p95]]; $("live-stats").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join(""); }
   $("smoke-detail").textContent = JSON.stringify({ kind: run.kind, mode: run.mode, status: run.status, startedAt: run.startedAt, completedAt: run.completedAt, targetStatus: run.targetStatus, certificates: run.certificates, summaries: run.summaries, evidence: run.output, latestOperation: progress.latestOperation, latestError: progress.latestError }, null, 2);
   $("download-output").classList.toggle("hidden", !run.downloadUrl); if (run.downloadUrl) $("download-output").href = run.downloadUrl;
   $("start-smoke").disabled = !terminal; $("start-benchmark").disabled = !terminal; if (terminal) localStorage.removeItem("kvs-dashboard-run-id");
@@ -204,9 +248,12 @@ async function startCloud() {
 }
 
 document.querySelectorAll('input[name="infra-mode"]').forEach(input => input.addEventListener("change", () => $("managed-fields").classList.toggle("hidden", document.querySelector('input[name="infra-mode"]:checked').value !== "managed")));
+for (const id of ["cloud-aws", "cloud-oci"]) $(id).addEventListener("change", () => { syncCloudCatalog(); discovered = null; destinations = null; });
 document.querySelectorAll("[data-go-step]").forEach(button => button.addEventListener("click", () => showStep(Number(button.dataset.goStep))));
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
 for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => syncManual(prefix));
+document.querySelectorAll(".option-search").forEach(input => input.addEventListener("input", () => filterOptions(input)));
+document.querySelectorAll('#live-series-controls input').forEach(input => input.addEventListener("change", renderLiveCharts));
 for (const id of ["adb-compartment", "ndcs-compartment"]) $(id).addEventListener("change", () => { if (destinations) void lookupDestinations(); });
 for (const context of ["adb", "ndcs"]) for (const suffix of ["profile", "region"]) $(`${context}-${suffix}`).addEventListener("change", () => {
   discovered = null; destinations = null;
@@ -217,4 +264,4 @@ for (const context of ["adb", "ndcs"]) for (const suffix of ["profile", "region"
 $("select-recommended").addEventListener("click", () => selectPresets(recommendedPreset)); $("select-all-presets").addEventListener("click", () => selectPresets(() => true)); $("clear-presets").addEventListener("click", () => selectPresets(() => false));
 $("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-runners").addEventListener("click", discoverRunners); $("lookup-destinations").addEventListener("click", lookupDestinations); $("refresh").addEventListener("click", () => load().catch(showLoadError));
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
-showStep(1); load().catch(showLoadError);
+syncCloudCatalog(); showStep(1); load().catch(showLoadError);

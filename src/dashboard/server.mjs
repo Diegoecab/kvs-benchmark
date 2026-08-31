@@ -41,7 +41,7 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
       const url = new URL(request.url, "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/api/bootstrap") {
         const profiles = await profileDiscovery();
-        return json(response, 200, { schemaVersion: 1, csrfToken: token, profiles, configs: listBenchmarkConfigs(configDirectory), capabilities: { existingInfrastructure: true, managedInfrastructure: false, cloudExecution: true, destinationLookup: true, cloudSshConfigured: Boolean(cloudRuns.keyFile), localMockExecution: true, liveProgress: true }, defaults: { awsRegion: "us-east-1", ociRegion: "us-ashburn-1", imageDigest: defaultImage } });
+        return json(response, 200, { schemaVersion: 1, csrfToken: token, profiles, configs: listBenchmarkConfigs(configDirectory), capabilities: { existingInfrastructure: true, managedInfrastructure: false, cloudExecution: true, destinationLookup: true, ociRunCommand: true, providerNativeEvidence: true, localMockExecution: true, liveProgress: true, liveCharts: true }, defaults: { awsRegion: "us-east-1", ociRegion: "us-ashburn-1", imageDigest: defaultImage } });
       }
       if (request.method === "POST" && url.pathname === "/api/preview") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
@@ -53,7 +53,7 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
       }
       if (request.method === "POST" && url.pathname === "/api/discover-destinations") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
-        return json(response, 200, await destinationDiscovery({ ...await body(request), keyFile: cloudRuns.keyFile }));
+        return json(response, 200, await destinationDiscovery(await body(request)));
       }
       if (request.method === "POST" && url.pathname === "/api/local-smoke") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });

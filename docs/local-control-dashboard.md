@@ -9,26 +9,12 @@ npm run dashboard
 
 Open `http://127.0.0.1:4177`. The service binds only to loopback.
 
-The commands are portable across Windows, macOS, and Linux. Cloud acceptance additionally requires `aws`, `oci`, `ssh`, and `scp` in `PATH`, configured AWS/OCI profiles, and the existing OCI runner key exposed only to the local server:
-
-```powershell
-# Windows PowerShell
-$env:KVS_OCI_SSH_KEY = 'C:\path\to\oci-runner-key'
-npm run dashboard
-```
-
-```bash
-# macOS or Linux
-export KVS_OCI_SSH_KEY="$HOME/.ssh/oci-runner-key"
-npm run dashboard
-```
-
-The key path and key contents are never returned to the browser or stored in a run specification.
+The commands are portable across Windows, macOS, and Linux. Cloud execution additionally requires `aws` and `oci` in `PATH` plus configured AWS/OCI profiles. AWS runners use Systems Manager and S3. OCI runners use Compute Run Command and Object Storage through instance principals. SSH, SCP, private keys, and public runner IPs are not prerequisites.
 
 The five-step wizard covers:
 
-1. AWS and OCI profiles, regions, OCI compartments, regional runners, and lookup-backed existing KVS resources.
-2. Existing-infrastructure or plan-only managed-infrastructure intent.
+1. Existing-infrastructure or separate-repository managed-infrastructure intent. Managed deployment is not enabled in the current milestone.
+2. Cloud providers, products, profiles, regions, OCI compartments, regional runners, evidence buckets, and lookup-backed existing KVS resources.
 3. A comparison table of checked-in workload presets, with repetitions configured independently per preset, followed by optional validated custom runtime overrides.
 4. Async or live execution behavior.
 5. A final configuration summary, immutable matrix preview, functional test, and output download.
@@ -43,7 +29,7 @@ The workload selector is model-aware. `executionMode` and `rateMultiplier` apply
 
 **Async** is the default. Starting a run immediately returns its ID and the server continues processing if the browser tab is closed. The browser remembers the latest run ID and reconnects when reopened. The dashboard process must remain running; restart recovery is a later milestone.
 
-**Live** uses the same immutable run configuration but refreshes more frequently. It displays accounted, successful and failed operations, current achieved throughput, in-flight requests, latest operation latency, and the final P95. Live metrics are provisional until the evidence is finalized.
+**Live** uses the same immutable run configuration but refreshes more frequently. It displays per-target accounting, throughput, in-flight requests, latest latency, rolling P95, and a selectable timeline for AWS, ADB, OCI NoSQL, and offered load. Live metrics are provisional until the evidence is finalized.
 
 Changing parameters during an accepted benchmark would invalidate direct comparison between providers. A future **exploratory live** mode may change offered rate, concurrency, or read/write mix, but each control change must be timestamped in the event log and the resulting report must be marked non-comparable. Consistency, dataset, payload, retries, and operation semantics should remain immutable for a session.
 
@@ -64,9 +50,9 @@ On completion, **Download benchmark output (.zip)** provides:
 
 The same files remain under `.kvs/runs/<run-id>/`, which is excluded from Git.
 
-## Cloud acceptance test
+## Cloud benchmark
 
-The cloud acceptance action is a short, fixed safety gate before larger benchmark matrices. It can run against any one, two, or three enabled products, uses only selected existing infrastructure, and performs these visible stages:
+The cloud action runs the selected preset/repetition matrix against any one, two, or three enabled products, uses only selected existing infrastructure, and performs these visible stages:
 
 1. Runner readiness and immutable container-image presence.
 2. Existing table, key-schema, capacity, endpoint, and credential validation.
@@ -74,13 +60,13 @@ The cloud acceptance action is a short, fixed safety gate before larger benchmar
 4. Strong-read certification on AWS DynamoDB, ADB DynamoDB API, and OCI NoSQL.
 5. SHA-256 validation and, when multiple products are enabled, cross-target comparison.
 6. Shared UTC T0 assignment with at least 120 seconds of lead time.
-7. Synchronized two-second, 10 reads/s workload on all three regional VMs.
+7. Each selected workload session on the enabled regional VMs, with one shared UTC T0 per session.
 8. Evidence collection and accounting/configuration/T0 acceptance checks.
 9. Standalone HTML report, evidence index, integrity manifest, and ZIP generation.
 
 The local process is a control plane only. Database calls and latency measurement execute on the selected regional VMs. Cloud acceptance does not create, resize, stop, or delete infrastructure. Preload is the only database mutation and requires the explicit UI checkbox.
 
-Destination lookup is read-only. AWS tables are listed from the selected AWS profile and region. OCI compartments are listed at `ACCESSIBLE` scope and displayed with their complete hierarchy, then Autonomous Databases and OCI NoSQL tables are filtered by the selected compartment. DynamoDB-API tables are listed from the selected ADB runner so ADB credentials remain on that VM. A manual table-name option remains available for advanced cases.
+Destination lookup is read-only. AWS tables are listed from the selected AWS profile and region. OCI compartments are listed at `ACCESSIBLE` scope and displayed with their complete hierarchy, then Autonomous Databases, OCI NoSQL tables, and Object Storage buckets are filtered by the selected compartment. DynamoDB-API tables are listed through OCI Compute Run Command so ADB credentials remain on that VM. A manual table-name option remains available for advanced cases.
 
 ## Current local API
 
@@ -97,7 +83,7 @@ Mutating calls require the per-launch `x-kvs-csrf` token. Only one local smoke r
 
 ## Current scope and safety
 
-- The short cloud acceptance pipeline is connected; arbitrary checked-in workload matrices remain a later milestone.
+- The selected checked-in workload matrix is connected to AWS SSM and OCI Compute Run Command.
 - Managed infrastructure is plan-intent only; the dashboard cannot run Terraform.
 - No create, update, stop, delete, or teardown operation is available from the UI.
 - The service binds to loopback, applies a restrictive content security policy, and never returns credential values.
@@ -120,10 +106,9 @@ The UI and service stay in `kvs-benchmark`. Optional infrastructure code belongs
 
 ## Next milestones
 
-1. Generalize the validated cloud adapter from fixed acceptance smoke to arbitrary immutable matrix rows and repetitions.
-2. Replace status polling with Server-Sent Events and persist an append-only state/event log for restart recovery.
-3. Add provider metrics, evidence browser, pricing preview, report/package generation, and a teardown inventory that requires explicit approval.
-4. Add an isolated exploratory-live controller with timestamped parameter setpoints and a non-comparable report label.
-5. Add the optional typed Terraform adapter with separate plan/apply/destroy approvals.
+1. Replace status polling with Server-Sent Events and persist an append-only state/event log for restart recovery.
+2. Add provider metrics, evidence browser, pricing preview, richer report/package generation, and a teardown inventory that requires explicit approval.
+3. Add an isolated exploratory-live controller with timestamped parameter setpoints and a non-comparable report label.
+4. Connect the separate `kvs-benchmark-infra` repository with separate plan/apply/destroy approvals.
 
 The dashboard must continue calling the same benchmark engine used by the CLI; it must not implement a second workload generator.

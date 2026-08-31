@@ -55,17 +55,15 @@ npm.cmd run dashboard
 
 Then open `http://127.0.0.1:4177` and follow the five-step wizard. The command is the same on Windows, macOS, and Linux; no `.cmd` or PowerShell script is required by the project.
 
-1. Select the detected AWS/OCI profile names and enter existing resource references.
-2. Keep **Use existing infrastructure** selected; managed infrastructure is plan-only.
+1. Keep **Use existing infrastructure** selected; the separate `kvs-benchmark-infra` adapter is not enabled yet.
+2. Choose AWS and/or OCI, then select products, profiles, regions, regional runners, compartments, tables, and provider-native evidence buckets.
 3. Select workload profiles and optional overrides. Model-specific overrides are applied only where compatible.
 4. Select **Async** (default) or **Live**.
-5. Review the immutable matrix and select either **Run local functional test** or **Run cloud acceptance test**. Cloud acceptance supports any one, two, or all three enabled products.
+5. Review the immutable matrix and select either **Run local functional test** or **Run selected cloud benchmark**. Cloud execution supports any one, two, or all three enabled products.
 
 The local functional test is safe and does not contact AWS or OCI. It runs a two-second in-memory workload through the real scheduler, metrics, report, and packaging path. When it reaches `COMPLETE`, select **Download benchmark output (.zip)**. The ZIP contains the standalone HTML report, operation and telemetry evidence, final summary, effective configuration, and SHA-256 manifest. Evidence is also written under `.kvs/runs/<run-id>/`.
 
-For cloud acceptance against existing runners, install the AWS CLI, OCI CLI, OpenSSH client (`ssh` and `scp`), and configure `KVS_OCI_SSH_KEY` before starting the dashboard. See [docs/local-control-dashboard.md](docs/local-control-dashboard.md) for platform-specific environment syntax and the exact non-provisioning scope.
-
-Cloud execution from the dashboard is not connected yet. Cloud runs remain available through the documented CLI workflow in [docs/quickstart.md](docs/quickstart.md). Complete dashboard behavior and limitations are documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md).
+For cloud execution against existing runners, install the AWS CLI and OCI CLI before starting the dashboard. AWS uses Systems Manager plus S3; OCI uses Compute Run Command plus Object Storage. No SSH client, SCP, private key, or public runner IP is required. Complete behavior and limitations are documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md).
 
 ## Reproducibility contract
 
