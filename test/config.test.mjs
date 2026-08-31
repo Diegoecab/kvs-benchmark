@@ -52,6 +52,9 @@ test("runtime overrides are validated, applied, and included in a new effective 
   assert.notEqual(effective.sha256, loaded.sha256); assert.equal(effective.baseSha256, loaded.sha256);
   const fixed = applyRuntimeOverrides(readConfig(new URL("../configs/x4-read-fixed-concurrency.json", import.meta.url)), { durationSeconds: 60, fixedConcurrency: 4 });
   assert.equal(fixed.config.load.durationSeconds, 60); assert.equal(fixed.config.load.fixedConcurrency, 4);
+  const eventual = applyRuntimeOverrides(loaded, { consistency: "eventual" });
+  assert.equal(eventual.config.workload.consistency, "eventual");
+  assert.throws(() => applyRuntimeOverrides(loaded, { consistency: "unknown" }), /unsupported consistency/);
 });
 
 test("workloads with writes require an explicit write mode", () => {

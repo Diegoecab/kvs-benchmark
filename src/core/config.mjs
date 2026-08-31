@@ -73,6 +73,7 @@ export function applyRuntimeOverrides(loaded, overrides = {}) {
     }
   }
   if (overrides.writeMode != null) config.workload.writeMode = overrides.writeMode;
+  if (overrides.consistency != null) config.workload.consistency = overrides.consistency;
   if (overrides.durationSeconds != null) {
     const duration = number(overrides.durationSeconds, "durationSeconds"); positive(duration, "durationSeconds");
     if (config.load.model === "open-loop") {

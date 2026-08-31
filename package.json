@@ -9,6 +9,7 @@
     "benchmark": "node src/cli.mjs run",
     "report": "node src/cli.mjs report",
     "package:benchmark": "node src/cli.mjs package",
+    "dashboard": "node src/cli.mjs dashboard",
     "validate": "node src/cli.mjs validate",
     "test": "node --test",
     "secrets:check": "node scripts/check-secrets.mjs",

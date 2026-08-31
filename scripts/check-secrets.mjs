@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const excluded = new Set([".git", "node_modules", "results"]);
+const excluded = new Set([".git", "node_modules", "results", "benchmark-package"]);
 const patterns = [
   /AKIA[0-9A-Z]{16}/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
@@ -26,4 +26,3 @@ if (findings.length) {
   process.stderr.write(`${findings.join("\n")}\n`);
   process.exitCode = 1;
 } else process.stdout.write("No high-confidence credential or OCID patterns found.\n");
-

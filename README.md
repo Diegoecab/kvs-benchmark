@@ -12,7 +12,7 @@ The harness defines its own versioned methodology for deterministic open-loop sc
 
 `v0.1` provides validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop and fixed-concurrency closed-loop execution, synchronized Phase 1 capacity transitions, concurrency/client-health telemetry, HTML evidence packaging, and offline tests. Cloud provisioning remains outside this repository.
 
-The proposed optional local control dashboard is documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md). It keeps infrastructure management disabled by default and delegates it to a separate repository when explicitly enabled.
+The optional local control dashboard is documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md). It discovers local AWS/OCI profile names, builds a validated run matrix, exports a reviewable run specification, and can execute a fixed two-second local mock smoke test with persisted evidence. Cloud execution and infrastructure management remain disabled.
 
 The harness also loads and certifies the canonical dataset in pre-existing, dedicated benchmark tables. It does not provision cloud infrastructure or create tables.
 
@@ -25,6 +25,7 @@ npm ci
 npm test
 node src/cli.mjs validate --config=configs/x1-read-open-loop.json
 node src/cli.mjs run --config=configs/smoke.json --target=mock --table=local --output=results/mock
+npm run dashboard
 ```
 
 Dataset workflow:

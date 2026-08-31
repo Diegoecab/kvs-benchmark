@@ -8,7 +8,7 @@ import { distribution } from "./statistics.mjs";
 const sleep = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, ms)));
 const fixed = value => Number(value.toFixed(3));
 
-export async function runOpenLoop({ config, configSha256, provider, target, table, output, startAt }) {
+export async function runOpenLoop({ config, configSha256, provider, target, table, output, startAt, onProgress }) {
   if (config.load.model !== "open-loop") throw new Error("run currently supports only open-loop configurations");
   fs.mkdirSync(output, { recursive: true });
   const operationsOutput = fs.createWriteStream(path.join(output, "operations.ndjson"), { encoding: "utf8" });
@@ -27,6 +27,10 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   const cpuStart = process.cpuUsage();
   const loopDelay = monitorEventLoopDelay({ resolution: 10 });
   loopDelay.enable();
+  const progress = () => {
+    if (!onProgress) return;
+    try { onProgress({ scheduled: operations.length, accounted: completed + Object.values(errors).reduce((sum, value) => sum + value, 0), completed, failed: Object.values(errors).reduce((sum, value) => sum + value, 0) - schedulerDrops, schedulerDrops, at: new Date().toISOString() }); } catch {}
+  };
 
   const telemetryTimer = setInterval(() => {
     const sample = { at: new Date().toISOString(), inFlight: inFlight.size, rssBytes: process.memoryUsage().rss, heapUsedBytes: process.memoryUsage().heapUsed };
@@ -49,6 +53,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
       schedulerDrops += 1;
       errors.ClientSchedulerDrop = (errors.ClientSchedulerDrop || 0) + 1;
       operationsOutput.write(`${JSON.stringify({ ...operation, scheduledEpochMs, startedEpochMs, endedEpochMs: startedEpochMs, queueDelayMs: fixed(queueDelayMs), serviceLatencyMs: 0, intendedLatencyMs: fixed(queueDelayMs), inFlightAtStart: inFlight.size, error: { name: "ClientSchedulerDrop" } })}\n`);
+      progress();
       continue;
     }
     const task = (async () => {
@@ -68,6 +73,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
       queueDelays.push(queueDelayMs);
       if (error) { errors[error.name] = (errors[error.name] || 0) + 1; failedService.push(serviceLatencyMs); }
       else { completed += 1; successfulService.push(serviceLatencyMs); successfulIntended.push(intendedLatencyMs); readUnits += record.readUnits; writeUnits += record.writeUnits; retries += Math.max(0, record.attempts - 1); }
+      progress();
     })();
     inFlight.add(task);
     task.finally(() => inFlight.delete(task));

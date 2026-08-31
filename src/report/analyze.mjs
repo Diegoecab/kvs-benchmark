@@ -8,6 +8,9 @@ export const LABELS = { aws: "AWS DynamoDB", adb: "ADB DynamoDB API", ndcs: "OCI
 
 const json = file => JSON.parse(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, ""));
 const errorName = record => typeof record.error === "string" ? record.error : record.error?.name;
+export const reportErrorName = record => record.error?.httpStatusCode === 429
+  ? `HTTP 429 rate limit${errorName(record) === "SyntaxError" ? " (SDK SyntaxError on HTML response)" : ""}`
+  : errorName(record) || "UnknownError";
 export const isThrottle = record => Boolean(errorName(record)?.match(/thrott|rate.?limit|limit.?exceeded|throughput.?exceeded|too.?many|capacity/i) || record.error?.httpStatusCode === 429 || record.rateLimitDelayMs > 0);
 
 function* lines(file, chunkBytes = 1024 * 1024) {
@@ -60,7 +63,7 @@ function analyzeOperations(file, summary) {
     const throttled = isThrottle(record);
     if (throttled) { point.throttles += 1; throttleSeconds[second] += 1; }
     if (record.error) {
-      const name = errorName(record) || "UnknownError";
+      const name = reportErrorName(record);
       point.errors += 1; errorCounts[name] = (errorCounts[name] || 0) + 1;
       errorSeconds[name] ||= Array(duration).fill(0); errorSeconds[name][second] += 1;
     } else {
@@ -137,14 +140,15 @@ export function analyzeSuite(suiteFile) {
   const groups = [];
   for (const key of [...new Set(sessions.map(value => `${value.phase}|${value.consistency}|${value.workload}`))]) {
     const [phase, consistency, workload] = key.split("|"); const selected = sessions.filter(value => value.phase === phase && value.consistency === consistency && value.workload === workload);
+    const durationSeconds = selected.reduce((sum, value) => sum + Number(value.targets.aws.summary.durationSeconds || 0), 0);
     const targets = {};
     for (const target of TARGETS) {
       const values = selected.flatMap(value => value.targets[target].successfulValues);
       const scheduled = selected.reduce((sum, value) => sum + value.targets[target].summary.scheduled, 0);
       const completed = selected.reduce((sum, value) => sum + value.targets[target].summary.completed, 0);
-      targets[target] = { scheduled, completed, completionRate: scheduled ? completed / scheduled : 0, successfulLatency: distribution(values), errors: selected.reduce((sum, value) => sum + Object.values(value.targets[target].errorCounts).reduce((a, b) => a + b, 0), 0), throttleAffectedSeconds: selected.reduce((sum, value) => sum + value.targets[target].throttling.affectedSeconds, 0) };
+      targets[target] = { scheduled, completed, completionRate: scheduled ? completed / scheduled : 0, attemptedOperationsPerSecond: durationSeconds ? scheduled / durationSeconds : 0, successfulOperationsPerSecond: durationSeconds ? completed / durationSeconds : 0, successfulLatency: distribution(values), errors: selected.reduce((sum, value) => sum + Object.values(value.targets[target].errorCounts).reduce((a, b) => a + b, 0), 0), throttleAffectedSeconds: selected.reduce((sum, value) => sum + value.targets[target].throttling.affectedSeconds, 0) };
     }
-    groups.push({ phase, consistency, workload, loadModel: selected[0].loadModel, sessions: selected.map(value => value.id), targets });
+    groups.push({ phase, consistency, workload, loadModel: selected[0].loadModel, sessionCount: selected.length, durationSeconds, sessions: selected.map(value => value.id), targets });
   }
   for (const session of sessions) for (const target of TARGETS) delete session.targets[target].successfulValues;
   return { schemaVersion: 1, generatedAt: new Date().toISOString(), title: suite.title, benchmarkId: suite.benchmarkId || null, scope: suite.scope || {}, executiveSummary: suite.executiveSummary || [], phaseDescriptions: suite.phaseDescriptions || {}, capacityComparison: suite.capacityComparison || {}, pricing: suite.pricing || null, references: suite.references || {}, additionalEvidence: suite.additionalEvidence || [], datasetCertificates: certificates, datasetCertified: certificates.length > 0, labels: LABELS, sessions, groups };

@@ -13,6 +13,7 @@ import { generateReport } from "./report/html.mjs";
 import { generatePackage } from "./report/package.mjs";
 import { coordinate, readCoordinationPlan } from "./core/coordinator.mjs";
 import { collectMetrics } from "./collectors/metrics.mjs";
+import { startDashboard } from "./dashboard/server.mjs";
 
 function args() {
   const values = { command: process.argv[2] };
@@ -34,6 +35,7 @@ const runtimeOverrides = {
   writeMode: options["write-mode"] ?? process.env.KVS_WRITE_MODE,
   rateMultiplier: options["rate-multiplier"] ?? process.env.KVS_RATE_MULTIPLIER,
   executionMode: options["execution-mode"] ?? process.env.KVS_EXECUTION_MODE,
+  consistency: options.consistency ?? process.env.KVS_CONSISTENCY,
 };
 const loaded = options.config ? applyRuntimeOverrides(readConfig(options.config), runtimeOverrides) : null;
 if (options.command === "validate") {
@@ -105,4 +107,6 @@ if (options.command === "validate") {
   if (!options.target || !options["start-at"] || !options["end-at"] || !options.output) throw new Error("metrics requires --target, --start-at, --end-at, and --output");
   const report = await collectMetrics({ target: options.target, table: options.table, startAt: options["start-at"], endAt: options["end-at"], output: options.output, region: options.region, compartment: options.compartment, resourceId: options["resource-id"], profile: options.profile });
   process.stdout.write(`${JSON.stringify({ target: report.target, startAt: report.startAt, endAt: report.endAt, metricCount: report.metrics.length, output: path.resolve(options.output) }, null, 2)}\n`);
-} else throw new Error("command must be validate, doctor, run, preload, certify, capacity, phase1, report, package, coordinate, or metrics");
+} else if (options.command === "dashboard") {
+  await startDashboard({ host: options.host || "127.0.0.1", port: Number(options.port || 4177) });
+} else throw new Error("command must be validate, doctor, run, preload, certify, capacity, phase1, report, package, coordinate, metrics, or dashboard");

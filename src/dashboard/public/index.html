@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>KVS Benchmark Control</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="hero">
+    <div><p class="eyebrow">LOCAL CONTROL PLANE</p><h1>KVS Benchmark Control</h1><p>Plan reproducible AWS DynamoDB, ADB DynamoDB API, and OCI NoSQL benchmark matrices.</p></div>
+    <div id="connection" class="status">Connecting…</div>
+  </header>
+  <nav><a href="#destinations">Destinations</a><a href="#infrastructure">Infrastructure</a><a href="#workloads">Workloads</a><a href="#preview">Matrix preview</a><a href="#local-test">Local test</a></nav>
+  <main>
+    <section id="destinations">
+      <div class="section-heading"><div><p class="eyebrow">STEP 1</p><h2>Execution destinations</h2></div><button id="refresh" class="secondary">Refresh profiles</button></div>
+      <p class="intro">Profiles are discovered by the local backend. Only profile names are sent to this page; credentials remain in the standard provider chains.</p>
+      <div id="warnings"></div>
+      <div class="cards three">
+        <article class="provider aws">
+          <label class="switch"><input id="aws-enabled" type="checkbox" checked><span>AWS DynamoDB</span></label>
+          <label>Available AWS profile<select id="aws-profile" size="4"></select></label>
+          <label>Region<input id="aws-region" value="us-east-1"></label>
+          <label>Table<input id="aws-table" placeholder="Existing table name"></label>
+        </article>
+        <article class="provider adb">
+          <label class="switch"><input id="adb-enabled" type="checkbox" checked><span>ADB DynamoDB API</span></label>
+          <label>Available OCI profile<select id="adb-profile" size="4"></select></label>
+          <label>Region<input id="adb-region" value="us-ashburn-1"></label>
+          <label>ADB/table<input id="adb-table" placeholder="ADB OCID and table reference"></label>
+        </article>
+        <article class="provider ndcs">
+          <label class="switch"><input id="ndcs-enabled" type="checkbox" checked><span>OCI NoSQL</span></label>
+          <label>Available OCI profile<select id="ndcs-profile" size="4"></select></label>
+          <label>Region<input id="ndcs-region" value="us-ashburn-1"></label>
+          <label>Table<input id="ndcs-table" placeholder="Table name or OCID"></label>
+        </article>
+      </div>
+    </section>
+
+    <section id="infrastructure">
+      <p class="eyebrow">STEP 2</p><h2>Infrastructure intent</h2>
+      <div class="segmented">
+        <label><input type="radio" name="infra-mode" value="existing" checked><span>Use existing infrastructure</span></label>
+        <label><input type="radio" name="infra-mode" value="managed"><span>Deploy from infrastructure repository</span></label>
+      </div>
+      <div id="managed-fields" class="managed hidden">
+        <div class="callout warning"><b>Plan-only in this milestone.</b> The Terraform adapter is intentionally not connected yet; selecting this mode records the deployment intent without applying anything.</div>
+        <div class="form-grid"><label>Infrastructure repository path<input id="infra-repo" placeholder="C:\path\to\kvs-benchmark-infra"></label><label>Git ref<input id="infra-ref" value="main"></label><label>Terraform workspace<input id="infra-workspace" placeholder="benchmark-run-id"></label></div>
+      </div>
+    </section>
+
+    <section id="workloads">
+      <p class="eyebrow">STEP 3</p><h2>Workloads and combinations</h2>
+      <p class="intro">Select one or more checked-in profiles. Optional overrides are validated and included in the effective configuration hash.</p>
+      <div id="configs" class="config-grid"></div>
+      <h3>Runtime overrides</h3>
+      <div class="form-grid compact">
+        <label>Repetitions<input id="repetitions" type="number" min="1" value="1"></label>
+        <label>Duration seconds<input id="duration" type="number" min="1" placeholder="Profile default"></label>
+        <label>Read %<input id="read-percent" type="number" min="0" max="100" placeholder="Profile default"></label>
+        <label>Write %<input id="write-percent" type="number" min="0" max="100" placeholder="Profile default"></label>
+        <label>Rate multiplier<input id="rate-multiplier" type="number" min="0.001" step="0.1" placeholder="1.0"></label>
+        <label>Fixed concurrency<input id="fixed-concurrency" type="number" min="1" placeholder="Profile default"></label>
+        <label>Consistency<select id="consistency"><option value="">Profile default</option><option value="strong">Strong</option><option value="eventual">Eventual</option></select></label>
+        <label>Execution mode<select id="execution-mode"><option value="">Profile default</option><option value="concurrent">Open-loop concurrent</option><option value="sequential">Open-loop sequential</option></select></label>
+      </div>
+    </section>
+
+    <section id="preview">
+      <div class="section-heading"><div><p class="eyebrow">STEP 4</p><h2>Immutable matrix preview</h2></div><button id="preview-button" class="primary">Build preview</button></div>
+      <div id="preview-status" class="callout">Select destinations and workloads, then build the preview.</div>
+      <div id="totals" class="stats"></div>
+      <div class="table-wrap"><table><thead><tr><th>Run</th><th>Profile</th><th>Load model</th><th>Read/write</th><th>Consistency</th><th>Duration</th><th>Ops/target</th><th>Avg ops/s</th><th>Avg ops/min</th><th>Targets</th><th>Config hash</th></tr></thead><tbody id="matrix"></tbody></table></div>
+      <div class="actions"><button id="download" class="secondary" disabled>Download run specification</button><button class="primary" disabled>Start benchmark — execution adapter pending</button></div>
+    </section>
+
+    <section id="local-test">
+      <div class="section-heading"><div><p class="eyebrow">FUNCTIONAL CHECK</p><h2>Run a local smoke benchmark</h2></div><button id="start-smoke" class="primary">Start local smoke test</button></div>
+      <p class="intro">Executes the real open-loop harness against the in-memory mock provider: 2 seconds at 10 operations/s, 20 scheduled reads, strong consistency. It never contacts AWS or OCI and never changes infrastructure.</p>
+      <div id="smoke-status" class="callout">Ready. No local test has been started from this dashboard session.</div>
+      <progress id="smoke-progress" max="20" value="0"></progress>
+      <div id="smoke-results" class="stats"></div>
+      <p id="smoke-output" class="output-path"></p>
+    </section>
+  </main>
+  <footer>Loopback-only dashboard · no cloud credentials stored in the browser · no infrastructure mutations in this milestone</footer>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
