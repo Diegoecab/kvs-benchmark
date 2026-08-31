@@ -19,6 +19,8 @@ The five-step wizard covers:
 
 Every workload override has contextual help in the UI. Only profile names reach the browser; credentials remain in standard AWS and OCI provider chains.
 
+The workload selector is model-aware. `executionMode` and `rateMultiplier` apply only to open-loop profiles, while `fixedConcurrency` applies only to fixed closed-loop profiles. In a mixed matrix, incompatible overrides are ignored for those rows and shown as preview warnings instead of rejecting the entire matrix. Selecting sequential open-loop scheduling automatically enforces one in-flight request.
+
 ## Async and live modes
 
 **Async** is the default. Starting a run immediately returns its ID and the server continues processing if the browser tab is closed. The browser remembers the latest run ID and reconnects when reopened. The dashboard process must remain running; restart recovery is a later milestone.
@@ -30,6 +32,8 @@ Changing parameters during an accepted benchmark would invalidate direct compari
 ## Current safe functional test
 
 The local smoke test runs for two seconds at 10 reads/s against an in-memory mock target. It uses the production scheduler, metrics, evidence, reporting, and packaging path without invoking a cloud SDK or changing infrastructure.
+
+To execute it, finish the wizard and select **Run local functional test** in the review step. The identically wired **Start local smoke test** button below the results area can be used to run it again. Both buttons are disabled only while a test is active.
 
 On completion, **Download benchmark output (.zip)** provides:
 

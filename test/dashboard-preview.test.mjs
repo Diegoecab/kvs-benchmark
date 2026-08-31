@@ -31,6 +31,19 @@ test("dashboard preview makes five-minute operation accounting explicit", () => 
 test("dashboard preview validates resources and applies consistency override", () => {
   const eventual = previewMatrix({ configs: ["x4-mixed-70-30-open-loop.json"], targets, repetitions: 1, infrastructure: { mode: "existing" }, overrides: { consistency: "eventual" } }, { configDirectory });
   assert.equal(eventual.rows[0].consistency, "eventual");
+  const inferredMix = previewMatrix({ configs: ["x4-mixed-70-30-open-loop.json"], targets, repetitions: 1, infrastructure: { mode: "existing" }, overrides: { readPercent: 80 } }, { configDirectory });
+  assert.equal(inferredMix.rows[0].writePercent, 20);
   const incomplete = structuredClone(targets); incomplete.aws.resource = "";
   assert.throws(() => previewMatrix({ configs: ["x4-mixed-70-30-open-loop.json"], targets: incomplete, infrastructure: { mode: "existing" } }, { configDirectory }), /aws requires an existing/);
+});
+
+test("dashboard applies model-specific overrides only to compatible profiles", () => {
+  const preview = previewMatrix({ configs: ["x4-mixed-70-30-open-loop.json", "x4-read-fixed-concurrency.json"], targets, repetitions: 1, infrastructure: { mode: "existing" }, overrides: { executionMode: "sequential", rateMultiplier: 2, fixedConcurrency: 7 } }, { configDirectory });
+  const open = preview.rows.find(row => row.loadModel === "open-loop");
+  const closed = preview.rows.find(row => row.loadModel === "closed-loop");
+  assert.deepEqual(open.ignoredOverrides, ["fixedConcurrency"]);
+  assert.equal(open.executionMode, "sequential");
+  assert.deepEqual(closed.ignoredOverrides, ["executionMode", "rateMultiplier"]);
+  assert.equal(closed.fixedConcurrency, 7);
+  assert.equal(preview.warnings.length, 2);
 });

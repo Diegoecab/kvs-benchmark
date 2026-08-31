@@ -89,6 +89,7 @@ export function applyRuntimeOverrides(loaded, overrides = {}) {
   if (overrides.executionMode != null) {
     if (config.load.model !== "open-loop") throw new Error("executionMode applies only to open-loop profiles");
     config.load.executionMode = overrides.executionMode;
+    if (overrides.executionMode === "sequential") config.load.maxInflight = 1;
   }
   if (overrides.fixedConcurrency != null) {
     if (config.load.model !== "closed-loop" || config.load.fixedConcurrency == null) throw new Error("fixedConcurrency requires a fixed closed-loop profile");

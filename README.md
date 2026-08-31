@@ -37,6 +37,34 @@ node src/cli.mjs certify --config=configs/x1-read-open-loop.json --target=mock -
 
 Cloud credentials are never accepted in configuration files. Use the standard SDK environment/profile mechanisms described in [docs/running.md](docs/running.md).
 
+## Dashboard quick start
+
+From the repository root:
+
+```bash
+npm ci
+npm run dashboard
+```
+
+On Windows PowerShell, use `npm.cmd` if the local execution policy blocks `npm.ps1`:
+
+```powershell
+npm.cmd ci
+npm.cmd run dashboard
+```
+
+Then open `http://127.0.0.1:4177` and follow the five-step wizard:
+
+1. Select the detected AWS/OCI profile names and enter existing resource references.
+2. Keep **Use existing infrastructure** selected; managed infrastructure is plan-only.
+3. Select workload profiles and optional overrides. Model-specific overrides are applied only where compatible.
+4. Select **Async** (default) or **Live**.
+5. Review the immutable matrix and select **Run local functional test**.
+
+The local functional test is safe and does not contact AWS or OCI. It runs a two-second in-memory workload through the real scheduler, metrics, report, and packaging path. When it reaches `COMPLETE`, select **Download benchmark output (.zip)**. The ZIP contains the standalone HTML report, operation and telemetry evidence, final summary, effective configuration, and SHA-256 manifest. Evidence is also written under `.kvs/runs/<run-id>/`.
+
+Cloud execution from the dashboard is not connected yet. Cloud runs remain available through the documented CLI workflow in [docs/quickstart.md](docs/quickstart.md). Complete dashboard behavior and limitations are documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md).
+
 ## Reproducibility contract
 
 Every accepted comparison must use the same:
