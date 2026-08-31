@@ -13,6 +13,10 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.equal((html.match(/class="info"/g) || []).length, 8);
   assert.match(html, /Review and run/);
   assert.match(app, /showStep\(currentStep \+ 1\)/);
+  assert.match(html, /class="table-wrap preset-table"/);
+  assert.match(html, /Custom runtime overrides/);
+  assert.match(html, /id="select-recommended"/);
+  assert.match(app, /function selectPresets/);
 });
 
 test("dashboard defaults to async and exposes live progress and package download", () => {

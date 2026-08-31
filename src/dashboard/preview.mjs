@@ -8,7 +8,10 @@ export function listBenchmarkConfigs(configDirectory) {
   return fs.readdirSync(configDirectory).filter(name => CONFIG_NAME.test(name)).sort().map(name => {
     try {
       const { config } = readConfig(path.join(configDirectory, name));
-      return { file: name, name: config.name, model: config.load.model, consistency: config.workload.consistency, readPercent: config.workload.readPercent, writePercent: config.workload.writePercent, durationSeconds: config.load.durationSeconds || config.load.schedule?.reduce((sum, step) => sum + step.seconds, 0) || null };
+      const rates = (config.load.schedule || []).map(step => step.operationsPerSecond).filter(Number.isFinite), levels = config.load.concurrencyLevels || [];
+      const loadSummary = config.load.model === "closed-loop" ? config.load.fixedConcurrency ? `${config.load.fixedConcurrency} workers` : levels.length ? `${levels.join(" / ")} workers` : "profile-defined workers" : rates.length ? `${Math.min(...rates)}${Math.max(...rates) === Math.min(...rates) ? "" : `–${Math.max(...rates)}`} ops/s` : "profile-defined";
+      const durationSeconds = config.load.durationSeconds || config.load.schedule?.reduce((sum, step) => sum + step.seconds, 0) || (levels.length ? levels.length * (Number(config.load.warmupSecondsPerLevel || 0) + Number(config.load.measurementSecondsPerLevel || 0)) : null);
+      return { file: name, name: config.name, model: config.load.model, consistency: config.workload.consistency, readPercent: config.workload.readPercent, writePercent: config.workload.writePercent, durationSeconds, loadSummary };
     } catch {
       return null;
     }

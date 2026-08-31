@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>KVS Benchmark Control</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="pipeline.css">
+  <title>KVS Benchmark Control</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="pipeline.css"><link rel="stylesheet" href="workloads.css">
 </head>
 <body>
   <header class="hero"><div><p class="eyebrow">LOCAL CONTROL PLANE</p><h1>KVS Benchmark Control</h1><p>Configure, review, execute, and package reproducible KVS benchmarks.</p></div><div id="connection" class="status">Connecting...</div></header>
@@ -26,8 +26,10 @@
       <div id="managed-fields" class="managed hidden"><div class="callout warning"><b>Plan-only.</b> This records deployment intent; it does not run Terraform or modify cloud resources.</div><div class="form-grid"><label>Infrastructure repository path<input id="infra-repo" placeholder="C:\path\to\kvs-benchmark-infra"></label><label>Git ref<input id="infra-ref" value="main"></label><label>Terraform workspace<input id="infra-workspace" placeholder="benchmark-run-id"></label></div></div>
     </section>
     <section class="wizard-panel" data-step="3" hidden>
-      <p class="eyebrow">STEP 3 OF 5</p><h2>Workloads and combinations</h2><p class="intro">Select checked-in profiles. Overrides are validated and become part of the immutable effective configuration.</p><div id="configs" class="config-grid"></div><h3>Runtime overrides</h3>
-      <div class="form-grid compact">
+      <p class="eyebrow">STEP 3 OF 5</p><h2>Workloads and combinations</h2><p class="intro">Choose one or more versioned presets. Their effective values are shown side by side before you apply any optional customization.</p>
+      <div class="preset-toolbar"><span id="preset-count">0 presets selected</span><div><button id="select-recommended" type="button" class="secondary">Recommended</button><button id="select-all-presets" type="button" class="secondary">Select all</button><button id="clear-presets" type="button" class="secondary">Clear</button></div></div>
+      <div class="table-wrap preset-table"><table><thead><tr><th scope="col">Run</th><th scope="col">Preset</th><th scope="col">Model</th><th scope="col">Read / write</th><th scope="col">Consistency</th><th scope="col">Duration</th><th scope="col">Load / concurrency</th></tr></thead><tbody id="configs"></tbody></table></div>
+      <details class="custom-overrides" open><summary>Custom runtime overrides <span>optional</span></summary><p class="intro">Leave fields empty to preserve each selected preset. Incompatible overrides are automatically ignored and reported in the preview.</p><div class="form-grid compact">
         <label><span class="label-line">Repetitions <button type="button" class="info" data-help="Number of times each selected workload is executed against every enabled target." aria-label="About repetitions">i</button></span><input id="repetitions" type="number" min="1" value="1"></label>
         <label><span class="label-line">Duration seconds <button type="button" class="info" data-help="Measurement duration per session, excluding setup and teardown. Empty keeps the checked-in profile value." aria-label="About duration">i</button></span><input id="duration" type="number" min="1" placeholder="Profile default"></label>
         <label><span class="label-line">Read % <button type="button" class="info" data-help="Share of scheduled operations that are reads. Read and write percentages must total 100." aria-label="About read percentage">i</button></span><input id="read-percent" type="number" min="0" max="100" placeholder="Profile default"></label>
@@ -36,7 +38,7 @@
         <label><span class="label-line">Fixed concurrency <button type="button" class="info" data-help="Closed-loop only. Sets the constant number of workers issuing requests for the entire session." aria-label="About fixed concurrency">i</button></span><input id="fixed-concurrency" type="number" min="1" placeholder="Profile default"></label>
         <label><span class="label-line">Consistency <button type="button" class="info" data-help="Strong requests the latest committed value; eventual may return an older value and can consume less read capacity." aria-label="About consistency">i</button></span><select id="consistency"><option value="">Profile default</option><option value="strong">Strong</option><option value="eventual">Eventual</option></select></label>
         <label><span class="label-line">Request scheduling <button type="button" class="info" data-help="Open-loop only. Concurrent schedules against time; sequential waits for one operation before scheduling the next." aria-label="About request scheduling">i</button></span><select id="execution-mode"><option value="">Profile default</option><option value="concurrent">Open-loop concurrent</option><option value="sequential">Open-loop sequential</option></select></label>
-      </div>
+      </div></details>
     </section>
     <section class="wizard-panel" data-step="4" hidden>
       <p class="eyebrow">STEP 4 OF 5</p><h2>Execution behavior</h2>

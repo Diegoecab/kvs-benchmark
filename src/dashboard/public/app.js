@@ -12,18 +12,23 @@ let destinations = null;
 
 function selected(select, preferred) { if (!select.options.length) return; ([...select.options].find(option => option.value === preferred) || select.options[0]).selected = true; }
 function profiles(select, values, preferred) { select.replaceChildren(...values.map(item => new Option(item, item))); selected(select, preferred); }
+const recommendedPreset = file => file.includes("5m") || file.includes("mixed-70-30");
+function presetDuration(seconds) { if (seconds == null) return "Variable"; return seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} sec`; }
+function updatePresetCount() { const selected = document.querySelectorAll('input[name="config"]:checked').length; $("preset-count").textContent = `${selected} preset${selected === 1 ? "" : "s"} selected`; }
 
 function renderConfigs(configs) {
   $("configs").replaceChildren(...configs.map(config => {
-    const label = document.createElement("label"); label.className = "config-option";
-    const input = document.createElement("input"); input.type = "checkbox"; input.value = config.file; input.checked = config.file.includes("5m") || config.file.includes("mixed-70-30"); input.name = "config";
-    const text = document.createElement("span"); text.textContent = config.name;
-    const detail = document.createElement("small"); detail.textContent = `${config.model} | ${config.consistency} | ${config.readPercent}/${config.writePercent} | ${config.durationSeconds ?? "variable"} s`;
-    const info = document.createElement("button"); info.type = "button"; info.className = "info"; info.textContent = "i"; info.dataset.help = `Checked-in workload: ${config.model} scheduling, ${config.consistency} consistency, ${config.readPercent}% reads and ${config.writePercent}% writes.`; info.setAttribute("aria-label", `About ${config.name}`); info.addEventListener("click", event => event.preventDefault());
-    input.addEventListener("change", syncOverrideApplicability);
-    text.append(detail, info); label.append(input, text); return label;
+    const row = document.createElement("tr"), selectedByDefault = recommendedPreset(config.file);
+    const choice = document.createElement("td"), input = document.createElement("input"); input.type = "checkbox"; input.value = config.file; input.checked = selectedByDefault; input.name = "config"; input.setAttribute("aria-label", `Run ${config.name}`); choice.append(input);
+    const preset = document.createElement("td"), title = document.createElement("b"); title.textContent = config.name; preset.append(title); if (selectedByDefault) { const badge = document.createElement("small"); badge.className = "preset-badge"; badge.textContent = "Recommended"; preset.append(badge); }
+    const values = [config.model === "open-loop" ? "Open-loop" : "Fixed workers", `${config.readPercent}% / ${config.writePercent}%`, config.consistency === "strong" ? "Strong" : "Eventual", presetDuration(config.durationSeconds), config.loadSummary || "Profile-defined"];
+    row.append(choice, preset, ...values.map(value => { const cell = document.createElement("td"); cell.textContent = value; return cell; }));
+    input.addEventListener("change", () => { syncOverrideApplicability(); updatePresetCount(); }); return row;
   }));
+  updatePresetCount();
 }
+
+function selectPresets(predicate) { document.querySelectorAll('input[name="config"]').forEach(input => { input.checked = predicate(input.value); }); syncOverrideApplicability(); updatePresetCount(); }
 
 function syncOverrideApplicability() {
   if (!bootstrap) return;
@@ -168,6 +173,7 @@ document.querySelectorAll("[data-go-step]").forEach(button => button.addEventLis
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
 for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => syncManual(prefix));
 for (const id of ["adb-compartment", "ndcs-compartment"]) $(id).addEventListener("change", () => { if (destinations) void lookupDestinations(); });
+$("select-recommended").addEventListener("click", () => selectPresets(recommendedPreset)); $("select-all-presets").addEventListener("click", () => selectPresets(() => true)); $("clear-presets").addEventListener("click", () => selectPresets(() => false));
 $("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-runners").addEventListener("click", discoverRunners); $("lookup-destinations").addEventListener("click", lookupDestinations); $("refresh").addEventListener("click", () => load().catch(showLoadError));
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
 showStep(1); load().catch(showLoadError);
