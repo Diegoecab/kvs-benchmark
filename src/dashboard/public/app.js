@@ -85,15 +85,14 @@ async function discoverRunners() {
   finally { $("discover-runners").disabled = false; }
 }
 
-function optionElement(label, value) { const option = document.createElement("option"); option.textContent = String(label ?? ""); option.value = String(value ?? ""); return option; }
-
 function lookupOptions(select, items, { label = item => item?.name || item, valueOf = item => item?.id || item, placeholder = "Select a discovered value", manual = false, preferred } = {}) {
   if (!select) throw new Error("Destination form is out of date; reload the dashboard page");
   const list = Array.isArray(items) ? items.filter(item => item != null) : [];
-  const options = [optionElement(placeholder, ""), ...list.map(item => optionElement(label(item) ?? "Unnamed", valueOf(item) ?? ""))];
-  if (manual) options.push(optionElement("Enter manually...", "__manual__"));
-  select.replaceChildren(...options);
-  if (preferred && [...select.options].some(option => option.value === preferred)) select.value = preferred; else if (list.length === 1) select.value = String(valueOf(list[0]) ?? "");
+  const normalized = list.map(item => ({ label: String(label(item) ?? "Unnamed"), value: String(valueOf(item) ?? "") }));
+  const selectedValue = preferred != null && normalized.some(item => item.value === String(preferred)) ? String(preferred) : normalized.length === 1 ? normalized[0].value : "";
+  const optionHtml = [{ label: placeholder, value: "" }, ...normalized, ...(manual ? [{ label: "Enter manually...", value: "__manual__" }] : [])]
+    .map(item => `<option value="${escapeHtml(item.value)}"${item.value === selectedValue ? " selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
+  select.innerHTML = optionHtml;
 }
 
 function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) !== "__manual__"; }

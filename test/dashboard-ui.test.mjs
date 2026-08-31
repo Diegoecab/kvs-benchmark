@@ -44,7 +44,8 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(app, /Runner discovery did not complete/);
   assert.match(app, /Destination lookup failed during \$\{stage\}/);
   assert.match(app, /Array\.isArray\(result\?\.oci\)/);
-  assert.match(app, /function optionElement/);
+  assert.match(app, /select\.innerHTML = optionHtml/);
+  assert.doesNotMatch(app, /function optionElement/);
   assert.match(app, /ADB compartment rendering/);
   assert.match(app, /OCI NoSQL table rendering/);
 });
