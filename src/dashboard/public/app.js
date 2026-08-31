@@ -75,12 +75,15 @@ function runnerOptions(select, values, preferredPattern) {
 async function discoverRunners() {
   $("discover-runners").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Checking cloud identities, running instances, remote-control health, placement, and evidence buckets...";
   try {
-    const response = await fetch("/api/discover-runners", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify({ awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile: value("adb-profile"), ociRegion: value("adb-region") }) });
-    const result = await response.json(); if (!response.ok) throw new Error(result?.error || `Discovery failed (${response.status})`);
-    discovered = { aws: Array.isArray(result?.aws) ? result.aws : [], oci: Array.isArray(result?.oci) ? result.oci : [], artifactBuckets: Array.isArray(result?.artifactBuckets) ? result.artifactBuckets : [] };
-    runnerOptions($("aws-runner"), discovered.aws, /aws.*runner|runner.*aws/i); runnerOptions($("adb-runner"), discovered.oci, /adb.*runner/i); runnerOptions($("ndcs-runner"), discovered.oci, /ndcs|nosql/i);
+    const fetchInventory = async (ociProfile, ociRegion) => { const response = await fetch("/api/discover-runners", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify({ awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile, ociRegion }) }); const result = await response.json(); if (!response.ok) throw new Error(result?.error || `Discovery failed (${response.status})`); return result; };
+    const adbContext = { profile: value("adb-profile"), region: value("adb-region") }, ndcsContext = { profile: value("ndcs-profile"), region: value("ndcs-region") };
+    const adbResult = await fetchInventory(adbContext.profile, adbContext.region), sameOciContext = adbContext.profile === ndcsContext.profile && adbContext.region === ndcsContext.region;
+    const ndcsResult = sameOciContext ? adbResult : await fetchInventory(ndcsContext.profile, ndcsContext.region);
+    const adbOci = Array.isArray(adbResult?.oci) ? adbResult.oci : [], ndcsOci = Array.isArray(ndcsResult?.oci) ? ndcsResult.oci : [];
+    discovered = { aws: Array.isArray(adbResult?.aws) ? adbResult.aws : [], adbOci, ndcsOci, oci: [...new Map([...adbOci, ...ndcsOci].map(item => [item.id, item])).values()], artifactBuckets: Array.isArray(adbResult?.artifactBuckets) ? adbResult.artifactBuckets : [] };
+    runnerOptions($("aws-runner"), discovered.aws, /aws.*runner|runner.*aws/i); runnerOptions($("adb-runner"), discovered.adbOci, /adb.*runner/i); runnerOptions($("ndcs-runner"), discovered.ndcsOci, /ndcs|nosql/i);
     $("artifact-bucket").replaceChildren(new Option("Select an evidence bucket", ""), ...(discovered.artifactBuckets || []).map(name => new Option(name, name))); if (discovered.artifactBuckets?.length === 1) $("artifact-bucket").value = discovered.artifactBuckets[0];
-    $("runner-status").className = "callout"; $("runner-status").innerHTML = `<b>Discovery complete.</b> ${(discovered.aws || []).length} AWS and ${(discovered.oci || []).length} OCI runner(s); ${discovered.artifactBuckets?.length || 0} evidence bucket(s).`; return true;
+    $("runner-status").className = "callout"; $("runner-status").innerHTML = `<b>Discovery complete.</b> ${discovered.aws.length} AWS, ${discovered.adbOci.length} ADB-profile OCI, and ${discovered.ndcsOci.length} NoSQL-profile OCI runner(s); ${discovered.artifactBuckets.length} evidence bucket(s).`; return true;
   } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error?.message || String(error); return false; }
   finally { $("discover-runners").disabled = false; }
 }
@@ -110,18 +113,18 @@ async function lookupDestinations() {
     stage = "request preparation";
     const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
     const previous = { awsTable: resourceValue("aws-table"), adbTable: resourceValue("adb-table"), ndcsTable: resourceValue("ndcs-table") };
-    const request = { awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile: value("adb-profile") || value("ndcs-profile"), ociRegion: value("adb-region") || value("ndcs-region"), adbCompartmentId: value("adb-compartment") || adbRunner.compartmentId, ndcsCompartmentId: value("ndcs-compartment") || ndcsRunner.compartmentId, adbRunnerHost: adbRunner.publicIp, targets: { aws: $("aws-enabled").checked, adb: $("adb-enabled").checked, ndcs: $("ndcs-enabled").checked } };
+    const request = { awsProfile: value("aws-profile"), awsRegion: value("aws-region"), adbOciProfile: value("adb-profile"), adbOciRegion: value("adb-region"), ndcsOciProfile: value("ndcs-profile"), ndcsOciRegion: value("ndcs-region"), adbCompartmentId: value("adb-compartment") || adbRunner.compartmentId, ndcsCompartmentId: value("ndcs-compartment") || ndcsRunner.compartmentId, adbRunnerHost: adbRunner.publicIp, targets: { aws: $("aws-enabled").checked, adb: $("adb-enabled").checked, ndcs: $("ndcs-enabled").checked } };
     stage = "cloud inventory request";
     const response = await fetch("/api/discover-destinations", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(request) });
     const result = await response.json(); if (!response.ok) throw new Error(result?.error || `Destination lookup failed (${response.status})`);
     stage = "response normalization";
     destinations = result && typeof result === "object" ? result : {};
     const previousAdbCompartment = request.adbCompartmentId, previousNdcsCompartment = request.ndcsCompartmentId;
-    const compartments = Array.isArray(destinations.compartments) ? destinations.compartments : [], awsTables = Array.isArray(destinations.awsTables) ? destinations.awsTables : [], databases = Array.isArray(destinations.autonomousDatabases) ? destinations.autonomousDatabases : [], adbTables = Array.isArray(destinations.adbTables) ? destinations.adbTables : [], nosqlTables = Array.isArray(destinations.nosqlTables) ? destinations.nosqlTables : [];
+    const adbCompartments = Array.isArray(destinations.adbCompartments) ? destinations.adbCompartments : [], ndcsCompartments = Array.isArray(destinations.ndcsCompartments) ? destinations.ndcsCompartments : [], awsTables = Array.isArray(destinations.awsTables) ? destinations.awsTables : [], databases = Array.isArray(destinations.autonomousDatabases) ? destinations.autonomousDatabases : [], adbTables = Array.isArray(destinations.adbTables) ? destinations.adbTables : [], nosqlTables = Array.isArray(destinations.nosqlTables) ? destinations.nosqlTables : [];
     stage = "ADB compartment rendering";
-    lookupOptions($("adb-compartment"), compartments, { label: item => item.path, preferred: previousAdbCompartment, placeholder: "Select an accessible compartment" });
+    lookupOptions($("adb-compartment"), adbCompartments, { label: item => item.path, preferred: previousAdbCompartment, placeholder: "Select an ADB-profile compartment" });
     stage = "OCI NoSQL compartment rendering";
-    lookupOptions($("ndcs-compartment"), compartments, { label: item => item.path, preferred: previousNdcsCompartment, placeholder: "Select an accessible compartment" });
+    lookupOptions($("ndcs-compartment"), ndcsCompartments, { label: item => item.path, preferred: previousNdcsCompartment, placeholder: "Select a NoSQL-profile compartment" });
     stage = "AWS table rendering";
     lookupOptions($("aws-table"), awsTables, { getValue: item => item, label: item => item, placeholder: "Select an AWS table", manual: true, preferred: previous.awsTable });
     stage = "Autonomous Database rendering";
@@ -133,7 +136,7 @@ async function lookupDestinations() {
     stage = "manual destination synchronization";
     for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
     const mismatch = destinations.adbRuntimeDatabaseId && value("adb-database") !== destinations.adbRuntimeDatabaseId;
-    $("runner-status").className = `callout${mismatch ? " warning" : ""}`; $("runner-status").innerHTML = `<b>Lookup complete.</b> ${compartments.length} OCI compartment(s), ${awsTables.length} AWS table(s), ${adbTables.length} ADB DynamoDB-API table(s), and ${nosqlTables.length} OCI NoSQL table(s).${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}`;
+    $("runner-status").className = `callout${mismatch ? " warning" : ""}`; $("runner-status").innerHTML = `<b>Lookup complete.</b> ${adbCompartments.length} ADB-profile compartment(s), ${ndcsCompartments.length} NoSQL-profile compartment(s), ${awsTables.length} AWS table(s), ${adbTables.length} ADB DynamoDB-API table(s), and ${nosqlTables.length} OCI NoSQL table(s).${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}`;
   } catch (error) { console.error("Destination lookup failed", { stage, error }); $("runner-status").className = "callout error"; $("runner-status").textContent = `Destination lookup failed during ${stage}: ${error?.message || String(error)}`; }
   finally { $("lookup-destinations").disabled = false; }
 }
@@ -205,6 +208,12 @@ document.querySelectorAll("[data-go-step]").forEach(button => button.addEventLis
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
 for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => syncManual(prefix));
 for (const id of ["adb-compartment", "ndcs-compartment"]) $(id).addEventListener("change", () => { if (destinations) void lookupDestinations(); });
+for (const context of ["adb", "ndcs"]) for (const suffix of ["profile", "region"]) $(`${context}-${suffix}`).addEventListener("change", () => {
+  discovered = null; destinations = null;
+  $("adb-runner").innerHTML = '<option value="">Discover runners again</option>'; $("ndcs-runner").innerHTML = '<option value="">Discover runners again</option>';
+  if (context === "adb") { $("adb-compartment").innerHTML = '<option value="">Lookup using selected ADB profile</option>'; $("adb-database").innerHTML = '<option value="">Lookup Autonomous Databases</option>'; $("adb-table").innerHTML = '<option value="">Lookup DynamoDB-API tables</option>'; }
+  else { $("ndcs-compartment").innerHTML = '<option value="">Lookup using selected NoSQL profile</option>'; $("ndcs-table").innerHTML = '<option value="">Lookup OCI NoSQL tables</option>'; }
+});
 $("select-recommended").addEventListener("click", () => selectPresets(recommendedPreset)); $("select-all-presets").addEventListener("click", () => selectPresets(() => true)); $("clear-presets").addEventListener("click", () => selectPresets(() => false));
 $("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-runners").addEventListener("click", discoverRunners); $("lookup-destinations").addEventListener("click", lookupDestinations); $("refresh").addEventListener("click", () => load().catch(showLoadError));
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }

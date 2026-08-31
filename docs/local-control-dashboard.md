@@ -35,6 +35,8 @@ The five-step wizard covers:
 
 Every workload override has contextual help in the UI. Only profile names reach the browser; credentials remain in standard AWS and OCI provider chains.
 
+ADB and OCI NoSQL have independent OCI profile and region contexts. Each compartment selector and resource inventory is resolved from its own selected profile/tenancy; changing either profile invalidates the prior runner and destination lookup so stale cross-tenancy selections cannot be reused.
+
 The workload selector is model-aware. `executionMode` and `rateMultiplier` apply only to open-loop profiles, while `fixedConcurrency` applies only to fixed closed-loop profiles. In a mixed matrix, incompatible overrides are ignored for those rows and shown as preview warnings instead of rejecting the entire matrix. Selecting sequential open-loop scheduling automatically enforces one in-flight request.
 
 ## Async and live modes

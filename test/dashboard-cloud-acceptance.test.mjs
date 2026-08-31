@@ -11,7 +11,7 @@ const input = {
   targets: {
     aws: { enabled: true, profile: "aws-test", region: "us-east-1", resource: "aws-table", runnerId: "i-012345" },
     adb: { enabled: true, profile: "OCI_TEST", region: "us-ashburn-1", resource: "adb_table", runnerId: "ocid1.instance.test.adb", runnerHost: "10.0.0.2" },
-    ndcs: { enabled: true, profile: "OCI_TEST", region: "us-ashburn-1", resource: "ndcs_table", runnerId: "ocid1.instance.test.ndcs", runnerHost: "10.0.0.3", compartmentId: "ocid1.compartment.test" },
+    ndcs: { enabled: true, profile: "OCI_NOSQL_TEST", region: "us-ashburn-1", resource: "ndcs_table", runnerId: "ocid1.instance.test.ndcs", runnerHost: "10.0.0.3", compartmentId: "ocid1.compartment.test" },
   },
 };
 

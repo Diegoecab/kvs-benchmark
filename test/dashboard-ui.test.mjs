@@ -43,13 +43,18 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(app, /syncOverrideApplicability/);
   assert.match(app, /Runner discovery did not complete/);
   assert.match(app, /Destination lookup failed during \$\{stage\}/);
-  assert.match(app, /Array\.isArray\(result\?\.oci\)/);
+  assert.match(app, /Array\.isArray\(adbResult\?\.oci\)/);
+  assert.match(app, /Array\.isArray\(ndcsResult\?\.oci\)/);
   assert.match(app, /select\.innerHTML = optionHtml/);
   assert.doesNotMatch(app, /function optionElement/);
   assert.match(app, /getValue = item => item\?\.id \|\| item/);
   assert.doesNotMatch(app, /valueOf = item/);
   assert.match(app, /ADB compartment rendering/);
   assert.match(app, /OCI NoSQL table rendering/);
+  assert.match(app, /adbOciProfile: value\("adb-profile"\)/);
+  assert.match(app, /ndcsOciProfile: value\("ndcs-profile"\)/);
+  assert.match(app, /destinations\.adbCompartments/);
+  assert.match(app, /destinations\.ndcsCompartments/);
 });
 
 test("destination option defaults do not collide with Object prototype methods", () => {

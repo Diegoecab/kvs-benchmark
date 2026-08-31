@@ -32,11 +32,9 @@ function validate(input, keyFile) {
     keyFile,
   };
   if (enabled.includes("aws")) Object.assign(result, { awsProfile: safe(target.aws.profile, /^[A-Za-z0-9_.-]+$/, "AWS profile"), awsRegion: safe(target.aws.region, /^[a-z]{2}-[a-z]+-\d$/, "AWS region"), awsTable: safe(target.aws.resource, /^[A-Za-z0-9_.-]+$/, "AWS table"), awsRunner: safe(target.aws.runnerId, /^i-[a-f0-9]+$/, "AWS runner"), bucket: safe(input.artifactBucket, /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, "Artifact bucket") });
-  if (enabled.includes("adb")) Object.assign(result, { ociProfile: safe(target.adb.profile, /^[A-Za-z0-9_.-]+$/, "OCI profile"), ociRegion: safe(target.adb.region, /^[a-z]{2}-[a-z]+-\d$/, "OCI region"), adbTable: safe(target.adb.resource, /^[A-Za-z0-9_.-]+$/, "ADB table"), adbRunner: safe(target.adb.runnerId, /^ocid1\.instance\./, "ADB runner"), adbHost: safe(target.adb.runnerHost, /^[A-Za-z0-9.-]+$/, "ADB runner host"), adbDatabaseId: target.adb.databaseId ? safe(target.adb.databaseId, /^ocid1\.autonomousdatabase\./, "Autonomous Database") : null });
+  if (enabled.includes("adb")) Object.assign(result, { adbOciProfile: safe(target.adb.profile, /^[A-Za-z0-9_.-]+$/, "ADB OCI profile"), adbOciRegion: safe(target.adb.region, /^[a-z]{2}-[a-z]+-\d$/, "ADB OCI region"), adbTable: safe(target.adb.resource, /^[A-Za-z0-9_.-]+$/, "ADB table"), adbRunner: safe(target.adb.runnerId, /^ocid1\.instance\./, "ADB runner"), adbHost: safe(target.adb.runnerHost, /^[A-Za-z0-9.-]+$/, "ADB runner host"), adbDatabaseId: target.adb.databaseId ? safe(target.adb.databaseId, /^ocid1\.autonomousdatabase\./, "Autonomous Database") : null });
   if (enabled.includes("ndcs")) {
-    const ociProfile = safe(target.ndcs.profile, /^[A-Za-z0-9_.-]+$/, "OCI profile"), ociRegion = safe(target.ndcs.region, /^[a-z]{2}-[a-z]+-\d$/, "OCI region");
-    if (result.ociProfile && (result.ociProfile !== ociProfile || result.ociRegion !== ociRegion)) throw new Error("Enabled OCI targets must use the same profile and region for acceptance");
-    Object.assign(result, { ociProfile, ociRegion, ndcsTable: safe(target.ndcs.resource, /^[A-Za-z0-9_.-]+$/, "OCI NoSQL table"), ndcsRunner: safe(target.ndcs.runnerId, /^ocid1\.instance\./, "OCI NoSQL runner"), ndcsHost: safe(target.ndcs.runnerHost, /^[A-Za-z0-9.-]+$/, "OCI NoSQL runner host"), compartment: safe(target.ndcs.compartmentId, /^ocid1\.compartment\./, "OCI compartment") });
+    Object.assign(result, { ndcsOciProfile: safe(target.ndcs.profile, /^[A-Za-z0-9_.-]+$/, "OCI NoSQL profile"), ndcsOciRegion: safe(target.ndcs.region, /^[a-z]{2}-[a-z]+-\d$/, "OCI NoSQL region"), ndcsTable: safe(target.ndcs.resource, /^[A-Za-z0-9_.-]+$/, "OCI NoSQL table"), ndcsRunner: safe(target.ndcs.runnerId, /^ocid1\.instance\./, "OCI NoSQL runner"), ndcsHost: safe(target.ndcs.runnerHost, /^[A-Za-z0-9.-]+$/, "OCI NoSQL runner host"), ndcsCompartment: safe(target.ndcs.compartmentId, /^ocid1\.compartment\./, "OCI NoSQL compartment") });
   }
   if (enabled.some(name => name !== "aws") && (!keyFile || !fs.existsSync(keyFile))) throw new Error("KVS_OCI_SSH_KEY is not configured or does not exist");
   return result;
@@ -51,7 +49,7 @@ function remoteScript(spec, target, action, output, startAt) {
   const table = target === "adb" ? spec.adbTable : spec.ndcsTable;
   const env = target === "adb"
     ? `runtime=/opt/meli-kvs-benchmark/run-20260826-02/adb-api.runtime.json\nexport AWS_ACCESS_KEY_ID="$(jq -r .accessKeyId \"$runtime\")"\nexport AWS_SECRET_ACCESS_KEY="$(jq -r .secretAccessKey \"$runtime\")"\nexport DDB_ENDPOINT="$(jq -r .endpoint \"$runtime\")"\nenvargs=(-e AWS_REGION=us-ashburn-1 -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT)`
-    : `envargs=(-e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION=${spec.ociRegion} -e OCI_COMPARTMENT_ID=${spec.compartment})`;
+    : `envargs=(-e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION=${spec.ndcsOciRegion} -e OCI_COMPARTMENT_ID=${spec.ndcsCompartment})`;
   const command = action === "run" ? `run --start-at=${startAt}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : `${action} --rate=20 --max-inflight=16`;
   const outputArgument = action === "doctor" ? "results/doctor.json" : "results";
   const invocation = `podman run --rm --network host "${'${envargs[@]}'}" -v "$root:/app/results:Z" "$image" ${command} --config=configs/smoke.json --target=${target} --table=${shellQuote(table)} --output=${outputArgument}`;
@@ -96,7 +94,7 @@ export class CliCloudAdapter {
   async validateResources(spec) {
     const result = {};
     if (spec.enabled.includes("aws")) result.aws = JSON.parse(await this.execute("aws", ["dynamodb", "describe-table", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--table-name", spec.awsTable, "--output", "json"])).Table;
-    if (spec.enabled.includes("ndcs")) result.ndcs = JSON.parse(await this.execute("oci", ["nosql", "table", "get", "--profile", spec.ociProfile, "--region", spec.ociRegion, "--table-name-or-id", spec.ndcsTable, "--compartment-id", spec.compartment, "--output", "json"])).data;
+    if (spec.enabled.includes("ndcs")) result.ndcs = JSON.parse(await this.execute("oci", ["nosql", "table", "get", "--profile", spec.ndcsOciProfile, "--region", spec.ndcsOciRegion, "--table-name-or-id", spec.ndcsTable, "--compartment-id", spec.ndcsCompartment, "--output", "json"])).data;
     if (spec.enabled.includes("adb")) { const adbDoctor = JSON.parse((await this.oci(spec, "adb", "doctor", `/opt/kvs-dashboard/${spec.runId}/validation/adb`, null)).stdout); const blocking = adbDoctor.checks.filter(check => check.required && !check.passed && !(check.name === "provisioned-capacity" && check.detail?.expected && Object.keys(check.detail.expected).length === 0)); if (blocking.length) throw new Error(`ADB doctor did not pass: ${blocking.map(check => check.name).join(", ")}`); const endpoint = adbDoctor.checks.find(check => check.name === "adb-endpoint")?.detail; if (spec.adbDatabaseId && !String(endpoint).includes(spec.adbDatabaseId)) throw new Error("Selected Autonomous Database does not match the ADB runner endpoint"); result.adb = adbDoctor.table; }
     return result;
   }

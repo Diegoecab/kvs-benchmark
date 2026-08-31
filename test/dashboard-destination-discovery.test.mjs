@@ -13,12 +13,35 @@ test("destination lookup returns full compartment paths and provider table inven
   };
   const result = await discoverDestinations({ awsProfile: "aws", ociProfile: "oci", adbCompartmentId: child, ndcsCompartmentId: child, adbRunnerHost: "203.0.113.1", keyFile: "ignored", executeCommand, profileReader: async () => ({ tenancy }), adbTableReader: async () => ({ tableNames: ["ddb_api"], databaseId: "ocid1.autonomousdatabase.test" }) });
   assert.deepEqual(result.awsTables, ["a-table", "z-table"]); assert.equal(result.compartments.find(item => item.id === child).path, "tenancy root / team / benchmark");
+  assert.equal(result.adbCompartments.find(item => item.id === child).path, "tenancy root / team / benchmark"); assert.equal(result.ndcsCompartments.find(item => item.id === child).path, "tenancy root / team / benchmark");
   assert.equal(result.autonomousDatabases[0].name, "adb"); assert.deepEqual(result.adbTables, ["ddb_api"]); assert.equal(result.adbRuntimeDatabaseId, "ocid1.autonomousdatabase.test");
   assert.deepEqual(result.nosqlTables[0], { id: "ocid1.nosqltable.test", name: "kv", state: "ACTIVE", readUnits: 40, writeUnits: 30, storageGB: 1 });
+});
+
+test("ADB and OCI NoSQL destination lookup use their independently selected profiles", async () => {
+  const calls = [], adbTenancy = "ocid1.tenancy.adb", ndcsTenancy = "ocid1.tenancy.ndcs";
+  const executeCommand = async (file, args) => {
+    calls.push([file, ...args]);
+    if (args[0] === "iam") return JSON.stringify({ data: [] });
+    if (args[0] === "db") return JSON.stringify({ data: [] });
+    if (args[0] === "nosql") return JSON.stringify({ data: { items: [] } });
+    throw new Error(`Unexpected ${file} ${args.join(" ")}`);
+  };
+  const result = await discoverDestinations({
+    targets: { aws: false, adb: true, ndcs: true },
+    adbOciProfile: "ADB_PROFILE", adbOciRegion: "us-ashburn-1", adbCompartmentId: adbTenancy,
+    ndcsOciProfile: "NOSQL_PROFILE", ndcsOciRegion: "us-ashburn-1", ndcsCompartmentId: ndcsTenancy,
+    executeCommand,
+    profileReader: async profile => ({ tenancy: profile === "ADB_PROFILE" ? adbTenancy : ndcsTenancy }),
+  });
+  assert.equal(result.adbCompartments[0].id, adbTenancy);
+  assert.equal(result.ndcsCompartments[0].id, ndcsTenancy);
+  assert.ok(calls.some(call => call[1] === "db" && call.includes("ADB_PROFILE") && call.includes(adbTenancy)));
+  assert.ok(calls.some(call => call[1] === "nosql" && call.includes("NOSQL_PROFILE") && call.includes(ndcsTenancy)));
 });
 
 test("AWS-only lookup does not require or contact OCI", async () => {
   const calls = [];
   const result = await discoverDestinations({ awsProfile: "aws", awsRegion: "us-east-1", targets: { aws: true, adb: false, ndcs: false }, executeCommand: async (file, args) => { calls.push([file, ...args]); assert.equal(file, "aws"); return JSON.stringify({ TableNames: ["only-aws"] }); }, profileReader: async () => { throw new Error("OCI must not be read"); } });
-  assert.deepEqual(result.awsTables, ["only-aws"]); assert.deepEqual(result.compartments, []); assert.equal(calls.length, 1);
+  assert.deepEqual(result.awsTables, ["only-aws"]); assert.deepEqual(result.compartments, []); assert.deepEqual(result.adbCompartments, []); assert.deepEqual(result.ndcsCompartments, []); assert.equal(calls.length, 1);
 });

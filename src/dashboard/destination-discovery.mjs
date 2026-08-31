@@ -34,27 +34,31 @@ export async function listAdbApiTables({ host, keyFile, image = defaultImage, ru
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 }
 
-export async function discoverDestinations({ awsProfile, awsRegion = "us-east-1", ociProfile, ociRegion = "us-ashburn-1", adbCompartmentId, ndcsCompartmentId, adbRunnerHost, targets, keyFile, executeCommand = execute, profileReader = readOciProfileValues, adbTableReader = listAdbApiTables }) {
-  const enabled = targets || { aws: true, adb: true, ndcs: true }, needsAws = enabled.aws !== false, needsOci = enabled.adb !== false || enabled.ndcs !== false;
+export async function discoverDestinations({ awsProfile, awsRegion = "us-east-1", ociProfile, ociRegion = "us-ashburn-1", adbOciProfile, adbOciRegion, ndcsOciProfile, ndcsOciRegion, adbCompartmentId, ndcsCompartmentId, adbRunnerHost, targets, keyFile, executeCommand = execute, profileReader = readOciProfileValues, adbTableReader = listAdbApiTables }) {
+  const enabled = targets || { aws: true, adb: true, ndcs: true }, needsAws = enabled.aws !== false, needsAdb = enabled.adb !== false, needsNdcs = enabled.ndcs !== false;
+  const adbProfile = adbOciProfile || ociProfile, adbRegion = adbOciRegion || ociRegion, ndcsProfile = ndcsOciProfile || ociProfile, ndcsRegion = ndcsOciRegion || ociRegion;
   if (needsAws && (!validProfile(awsProfile) || !validRegion(awsRegion))) throw new Error("A valid AWS profile and region are required");
-  if (needsOci && (!validProfile(ociProfile) || !validRegion(ociRegion))) throw new Error("A valid OCI profile and region are required");
-  const profile = needsOci ? await profileReader(ociProfile) : null, tenancy = profile?.tenancy;
-  const [awsRaw, compartmentsRaw, adbRuntime] = await Promise.all([
+  if (needsAdb && (!validProfile(adbProfile) || !validRegion(adbRegion))) throw new Error("A valid ADB OCI profile and region are required");
+  if (needsNdcs && (!validProfile(ndcsProfile) || !validRegion(ndcsRegion))) throw new Error("A valid OCI NoSQL profile and region are required");
+  const [adbIdentity, ndcsIdentity] = await Promise.all([needsAdb ? profileReader(adbProfile) : null, needsNdcs ? profileReader(ndcsProfile) : null]);
+  const adbTenancy = adbIdentity?.tenancy, ndcsTenancy = ndcsIdentity?.tenancy;
+  const [awsRaw, adbCompartmentsRaw, ndcsCompartmentsRaw, adbRuntime] = await Promise.all([
     needsAws ? executeCommand("aws", ["dynamodb", "list-tables", "--profile", awsProfile, "--region", awsRegion, "--output", "json"]) : Promise.resolve('{"TableNames":[]}'),
-    needsOci ? executeCommand("oci", ["iam", "compartment", "list", "--profile", ociProfile, "--compartment-id", tenancy, "--compartment-id-in-subtree", "true", "--access-level", "ACCESSIBLE", "--lifecycle-state", "ACTIVE", "--all", "--output", "json"]) : Promise.resolve('{"data":[]}'),
-    enabled.adb !== false && adbRunnerHost ? adbTableReader({ host: adbRunnerHost, keyFile, executeCommand }) : Promise.resolve({ tableNames: [], databaseId: null }),
+    needsAdb ? executeCommand("oci", ["iam", "compartment", "list", "--profile", adbProfile, "--compartment-id", adbTenancy, "--compartment-id-in-subtree", "true", "--access-level", "ACCESSIBLE", "--lifecycle-state", "ACTIVE", "--all", "--output", "json"]) : Promise.resolve('{"data":[]}'),
+    needsNdcs ? executeCommand("oci", ["iam", "compartment", "list", "--profile", ndcsProfile, "--compartment-id", ndcsTenancy, "--compartment-id-in-subtree", "true", "--access-level", "ACCESSIBLE", "--lifecycle-state", "ACTIVE", "--all", "--output", "json"]) : Promise.resolve('{"data":[]}'),
+    needsAdb && adbRunnerHost ? adbTableReader({ host: adbRunnerHost, keyFile, executeCommand }) : Promise.resolve({ tableNames: [], databaseId: null }),
   ]);
-  const compartments = needsOci ? compartmentRows(parse(compartmentsRaw).data || [], tenancy) : [], allowed = new Set(compartments.map(item => item.id));
-  if (enabled.adb !== false && adbCompartmentId && !allowed.has(adbCompartmentId)) throw new Error("Selected ADB compartment is not accessible");
-  if (enabled.ndcs !== false && ndcsCompartmentId && !allowed.has(ndcsCompartmentId)) throw new Error("Selected OCI NoSQL compartment is not accessible");
+  const adbCompartments = needsAdb ? compartmentRows(parse(adbCompartmentsRaw).data || [], adbTenancy) : [], ndcsCompartments = needsNdcs ? compartmentRows(parse(ndcsCompartmentsRaw).data || [], ndcsTenancy) : [];
+  if (needsAdb && adbCompartmentId && !new Set(adbCompartments.map(item => item.id)).has(adbCompartmentId)) throw new Error("Selected ADB compartment is not accessible through the selected ADB profile");
+  if (needsNdcs && ndcsCompartmentId && !new Set(ndcsCompartments.map(item => item.id)).has(ndcsCompartmentId)) throw new Error("Selected OCI NoSQL compartment is not accessible through the selected OCI NoSQL profile");
   const [adbRaw, ndcsRaw] = await Promise.all([
-    enabled.adb !== false && adbCompartmentId ? executeCommand("oci", ["db", "autonomous-database", "list", "--profile", ociProfile, "--region", ociRegion, "--compartment-id", adbCompartmentId, "--all", "--output", "json"]) : Promise.resolve('{"data":[]}'),
-    enabled.ndcs !== false && ndcsCompartmentId ? executeCommand("oci", ["nosql", "table", "list", "--profile", ociProfile, "--region", ociRegion, "--compartment-id", ndcsCompartmentId, "--all", "--output", "json"]) : Promise.resolve('{"data":{"items":[]}}'),
+    needsAdb && adbCompartmentId ? executeCommand("oci", ["db", "autonomous-database", "list", "--profile", adbProfile, "--region", adbRegion, "--compartment-id", adbCompartmentId, "--all", "--output", "json"]) : Promise.resolve('{"data":[]}'),
+    needsNdcs && ndcsCompartmentId ? executeCommand("oci", ["nosql", "table", "list", "--profile", ndcsProfile, "--region", ndcsRegion, "--compartment-id", ndcsCompartmentId, "--all", "--output", "json"]) : Promise.resolve('{"data":{"items":[]}}'),
   ]);
   const adbData = parse(adbRaw).data || [], ndcsData = parse(ndcsRaw).data; const ndcsItems = Array.isArray(ndcsData) ? ndcsData : ndcsData?.items || [];
   return {
     schemaVersion: 1, discoveredAt: new Date().toISOString(),
-    awsTables: (parse(awsRaw).TableNames || []).sort(), compartments,
+    awsTables: (parse(awsRaw).TableNames || []).sort(), compartments: adbCompartments, adbCompartments, ndcsCompartments,
     autonomousDatabases: adbData.map(item => ({ id: item.id, name: item["display-name"], dbName: item["db-name"], state: item["lifecycle-state"], cpuCoreCount: item["cpu-core-count"], computeCount: item["compute-count"] })).sort((a, b) => a.name.localeCompare(b.name)),
     adbTables: [...new Set(adbRuntime.tableNames || [])].sort(), adbRuntimeDatabaseId: adbRuntime.databaseId || null,
     nosqlTables: ndcsItems.map(item => ({ id: item.id, name: item.name, state: item["lifecycle-state"], readUnits: item["table-limits"]?.["max-read-units"], writeUnits: item["table-limits"]?.["max-write-units"], storageGB: item["table-limits"]?.["max-storage-in-g-bs"] })).sort((a, b) => a.name.localeCompare(b.name)),
