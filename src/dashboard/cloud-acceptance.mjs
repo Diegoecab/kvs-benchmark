@@ -10,7 +10,7 @@ import { executeOciRunCommand } from "./oci-run-command.mjs";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const configDirectory = path.join(repositoryRoot, "configs");
 const defaultOutput = path.join(repositoryRoot, ".kvs", "cloud-runs");
-const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:90975b64725902487fbaea43da5c772534d1f28f9bbcf087d693c2d6707a8afc";
+const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:55ce8eeccce8e8e698ec7b672e491d0e99c28813a2d8ad93ef44ae85330131e0";
 const stages = ["runner-readiness", "resource-validation", "dataset-preload", "dataset-certification", "dataset-hash-match", "t0-scheduled", "workload", "evidence-collection", "acceptance-validation", "package-generation"];
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const safe = (value, pattern, label) => { if (!pattern.test(value || "")) throw new Error(`${label} is invalid`); return value; };
