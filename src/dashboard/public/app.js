@@ -85,10 +85,15 @@ async function discoverRunners() {
   finally { $("discover-runners").disabled = false; }
 }
 
-function lookupOptions(select, items, { label = item => item.name || item, valueOf = item => item.id || item, placeholder = "Select a discovered value", manual = false, preferred } = {}) {
+function optionElement(label, value) { const option = document.createElement("option"); option.textContent = String(label ?? ""); option.value = String(value ?? ""); return option; }
+
+function lookupOptions(select, items, { label = item => item?.name || item, valueOf = item => item?.id || item, placeholder = "Select a discovered value", manual = false, preferred } = {}) {
   if (!select) throw new Error("Destination form is out of date; reload the dashboard page");
-  const list = Array.isArray(items) ? items.filter(item => item != null) : [], options = [new Option(placeholder, ""), ...list.map(item => new Option(String(label(item) ?? "Unnamed"), String(valueOf(item) ?? "")))]; if (manual) options.push(new Option("Enter manually...", "__manual__")); select.replaceChildren(...options);
-  if (preferred && Array.from(select.options || []).some(option => option.value === preferred)) select.value = preferred; else if (list.length === 1) select.value = String(valueOf(list[0]) ?? "");
+  const list = Array.isArray(items) ? items.filter(item => item != null) : [];
+  const options = [optionElement(placeholder, ""), ...list.map(item => optionElement(label(item) ?? "Unnamed", valueOf(item) ?? ""))];
+  if (manual) options.push(optionElement("Enter manually...", "__manual__"));
+  select.replaceChildren(...options);
+  if (preferred && [...select.options].some(option => option.value === preferred)) select.value = preferred; else if (list.length === 1) select.value = String(valueOf(list[0]) ?? "");
 }
 
 function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) !== "__manual__"; }
@@ -114,13 +119,19 @@ async function lookupDestinations() {
     destinations = result && typeof result === "object" ? result : {};
     const previousAdbCompartment = request.adbCompartmentId, previousNdcsCompartment = request.ndcsCompartmentId;
     const compartments = Array.isArray(destinations.compartments) ? destinations.compartments : [], awsTables = Array.isArray(destinations.awsTables) ? destinations.awsTables : [], databases = Array.isArray(destinations.autonomousDatabases) ? destinations.autonomousDatabases : [], adbTables = Array.isArray(destinations.adbTables) ? destinations.adbTables : [], nosqlTables = Array.isArray(destinations.nosqlTables) ? destinations.nosqlTables : [];
-    stage = "destination rendering";
+    stage = "ADB compartment rendering";
     lookupOptions($("adb-compartment"), compartments, { label: item => item.path, preferred: previousAdbCompartment, placeholder: "Select an accessible compartment" });
+    stage = "OCI NoSQL compartment rendering";
     lookupOptions($("ndcs-compartment"), compartments, { label: item => item.path, preferred: previousNdcsCompartment, placeholder: "Select an accessible compartment" });
+    stage = "AWS table rendering";
     lookupOptions($("aws-table"), awsTables, { valueOf: item => item, label: item => item, placeholder: "Select an AWS table", manual: true, preferred: previous.awsTable });
+    stage = "Autonomous Database rendering";
     lookupOptions($("adb-database"), databases, { label: item => `${item.name} | ${item.state} | ${item.computeCount ?? item.cpuCoreCount ?? "?"} compute`, preferred: destinations.adbRuntimeDatabaseId, placeholder: "Select an Autonomous Database" });
+    stage = "ADB DynamoDB-API table rendering";
     lookupOptions($("adb-table"), adbTables, { valueOf: item => item, label: item => item, placeholder: "Select a DynamoDB-API table", manual: true, preferred: previous.adbTable });
+    stage = "OCI NoSQL table rendering";
     lookupOptions($("ndcs-table"), nosqlTables, { label: item => `${item.name} | ${item.state} | ${item.readUnits ?? "?"} RU / ${item.writeUnits ?? "?"} WU`, valueOf: item => item.name, placeholder: "Select an OCI NoSQL table", manual: true, preferred: previous.ndcsTable });
+    stage = "manual destination synchronization";
     for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
     const mismatch = destinations.adbRuntimeDatabaseId && value("adb-database") !== destinations.adbRuntimeDatabaseId;
     $("runner-status").className = `callout${mismatch ? " warning" : ""}`; $("runner-status").innerHTML = `<b>Lookup complete.</b> ${compartments.length} OCI compartment(s), ${awsTables.length} AWS table(s), ${adbTables.length} ADB DynamoDB-API table(s), and ${nosqlTables.length} OCI NoSQL table(s).${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}`;
