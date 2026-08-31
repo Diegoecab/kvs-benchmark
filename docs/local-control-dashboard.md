@@ -27,7 +27,7 @@ The key path and key contents are never returned to the browser or stored in a r
 
 The five-step wizard covers:
 
-1. AWS and OCI profiles, regions, and existing KVS resources.
+1. AWS and OCI profiles, regions, OCI compartments, regional runners, and lookup-backed existing KVS resources.
 2. Existing-infrastructure or plan-only managed-infrastructure intent.
 3. Checked-in workload combinations and validated runtime overrides.
 4. Async or live execution behavior.
@@ -64,13 +64,13 @@ The same files remain under `.kvs/runs/<run-id>/`, which is excluded from Git.
 
 ## Cloud acceptance test
 
-The cloud acceptance action is a short, fixed safety gate before larger benchmark matrices. It uses only selected existing infrastructure and performs these visible stages:
+The cloud acceptance action is a short, fixed safety gate before larger benchmark matrices. It can run against any one, two, or three enabled products, uses only selected existing infrastructure, and performs these visible stages:
 
 1. Runner readiness and immutable container-image presence.
 2. Existing table, key-schema, capacity, endpoint, and credential validation.
 3. Canonical 100-key dataset preload after explicit write authorization.
 4. Strong-read certification on AWS DynamoDB, ADB DynamoDB API, and OCI NoSQL.
-5. Cross-target SHA-256 comparison.
+5. SHA-256 validation and, when multiple products are enabled, cross-target comparison.
 6. Shared UTC T0 assignment with at least 120 seconds of lead time.
 7. Synchronized two-second, 10 reads/s workload on all three regional VMs.
 8. Evidence collection and accounting/configuration/T0 acceptance checks.
@@ -78,12 +78,15 @@ The cloud acceptance action is a short, fixed safety gate before larger benchmar
 
 The local process is a control plane only. Database calls and latency measurement execute on the selected regional VMs. Cloud acceptance does not create, resize, stop, or delete infrastructure. Preload is the only database mutation and requires the explicit UI checkbox.
 
+Destination lookup is read-only. AWS tables are listed from the selected AWS profile and region. OCI compartments are listed at `ACCESSIBLE` scope and displayed with their complete hierarchy, then Autonomous Databases and OCI NoSQL tables are filtered by the selected compartment. DynamoDB-API tables are listed from the selected ADB runner so ADB credentials remain on that VM. A manual table-name option remains available for advanced cases.
+
 ## Current local API
 
 - `GET /api/bootstrap`: safe profile names, workload configurations, defaults, and capabilities.
 - `POST /api/preview`: validates and expands a matrix without contacting providers.
 - `POST /api/local-smoke` with `{"mode":"async"}` or `{"mode":"live"}`: starts the local test.
 - `POST /api/discover-runners`: discovers running regional runners and benchmark evidence buckets using selected profile names.
+- `POST /api/discover-destinations`: lists accessible OCI compartments, Autonomous Databases, and AWS/ADB/OCI NoSQL tables without mutation.
 - `POST /api/cloud-acceptance`: starts the guarded three-target cloud acceptance pipeline.
 - `GET /api/runs/<run-id>`: current progress and final summary.
 - `GET /api/runs/<run-id>/download`: final HTML-plus-evidence ZIP.

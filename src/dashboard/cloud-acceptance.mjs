@@ -23,28 +23,22 @@ function run(file, args, { timeout = 15 * 60_000, cwd = repositoryRoot } = {}) {
 function validate(input, keyFile) {
   if (!input?.writeAuthorization) throw new Error("Dataset preload authorization is required");
   const target = input.targets || {};
-  for (const name of ["aws", "adb", "ndcs"]) if (!target[name]?.enabled) throw new Error("Cloud acceptance requires AWS, ADB, and OCI NoSQL");
+  const enabled = ["aws", "adb", "ndcs"].filter(name => target[name]?.enabled);
+  if (!enabled.length) throw new Error("Cloud acceptance requires at least one enabled target");
   const result = {
+    enabled,
     mode: ["async", "live"].includes(input.execution?.mode) ? input.execution.mode : "async",
-    awsProfile: safe(target.aws.profile, /^[A-Za-z0-9_.-]+$/, "AWS profile"),
-    awsRegion: safe(target.aws.region, /^[a-z]{2}-[a-z]+-\d$/, "AWS region"),
-    awsTable: safe(target.aws.resource, /^[A-Za-z0-9_.-]+$/, "AWS table"),
-    awsRunner: safe(target.aws.runnerId, /^i-[a-f0-9]+$/, "AWS runner"),
-    bucket: safe(input.artifactBucket, /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, "Artifact bucket"),
-    ociProfile: safe(target.adb.profile, /^[A-Za-z0-9_.-]+$/, "OCI profile"),
-    ociRegion: safe(target.adb.region, /^[a-z]{2}-[a-z]+-\d$/, "OCI region"),
-    adbTable: safe(target.adb.resource, /^[A-Za-z0-9_.-]+$/, "ADB table"),
-    adbRunner: safe(target.adb.runnerId, /^ocid1\.instance\./, "ADB runner"),
-    adbHost: safe(target.adb.runnerHost, /^[A-Za-z0-9.-]+$/, "ADB runner host"),
-    ndcsTable: safe(target.ndcs.resource, /^[A-Za-z0-9_.-]+$/, "OCI NoSQL table"),
-    ndcsRunner: safe(target.ndcs.runnerId, /^ocid1\.instance\./, "OCI NoSQL runner"),
-    ndcsHost: safe(target.ndcs.runnerHost, /^[A-Za-z0-9.-]+$/, "OCI NoSQL runner host"),
-    compartment: safe(target.ndcs.compartmentId, /^ocid1\.compartment\./, "OCI compartment"),
     image: safe(input.imageDigest || defaultImage, /^[a-z0-9./_-]+@sha256:[a-f0-9]{64}$/i, "Runner image digest"),
     keyFile,
   };
-  if (target.ndcs.profile !== result.ociProfile || target.ndcs.region !== result.ociRegion) throw new Error("ADB and OCI NoSQL must use the same OCI profile and Ashburn region for acceptance");
-  if (!keyFile || !fs.existsSync(keyFile)) throw new Error("KVS_OCI_SSH_KEY is not configured or does not exist");
+  if (enabled.includes("aws")) Object.assign(result, { awsProfile: safe(target.aws.profile, /^[A-Za-z0-9_.-]+$/, "AWS profile"), awsRegion: safe(target.aws.region, /^[a-z]{2}-[a-z]+-\d$/, "AWS region"), awsTable: safe(target.aws.resource, /^[A-Za-z0-9_.-]+$/, "AWS table"), awsRunner: safe(target.aws.runnerId, /^i-[a-f0-9]+$/, "AWS runner"), bucket: safe(input.artifactBucket, /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, "Artifact bucket") });
+  if (enabled.includes("adb")) Object.assign(result, { ociProfile: safe(target.adb.profile, /^[A-Za-z0-9_.-]+$/, "OCI profile"), ociRegion: safe(target.adb.region, /^[a-z]{2}-[a-z]+-\d$/, "OCI region"), adbTable: safe(target.adb.resource, /^[A-Za-z0-9_.-]+$/, "ADB table"), adbRunner: safe(target.adb.runnerId, /^ocid1\.instance\./, "ADB runner"), adbHost: safe(target.adb.runnerHost, /^[A-Za-z0-9.-]+$/, "ADB runner host"), adbDatabaseId: target.adb.databaseId ? safe(target.adb.databaseId, /^ocid1\.autonomousdatabase\./, "Autonomous Database") : null });
+  if (enabled.includes("ndcs")) {
+    const ociProfile = safe(target.ndcs.profile, /^[A-Za-z0-9_.-]+$/, "OCI profile"), ociRegion = safe(target.ndcs.region, /^[a-z]{2}-[a-z]+-\d$/, "OCI region");
+    if (result.ociProfile && (result.ociProfile !== ociProfile || result.ociRegion !== ociRegion)) throw new Error("Enabled OCI targets must use the same profile and region for acceptance");
+    Object.assign(result, { ociProfile, ociRegion, ndcsTable: safe(target.ndcs.resource, /^[A-Za-z0-9_.-]+$/, "OCI NoSQL table"), ndcsRunner: safe(target.ndcs.runnerId, /^ocid1\.instance\./, "OCI NoSQL runner"), ndcsHost: safe(target.ndcs.runnerHost, /^[A-Za-z0-9.-]+$/, "OCI NoSQL runner host"), compartment: safe(target.ndcs.compartmentId, /^ocid1\.compartment\./, "OCI compartment") });
+  }
+  if (enabled.some(name => name !== "aws") && (!keyFile || !fs.existsSync(keyFile))) throw new Error("KVS_OCI_SSH_KEY is not configured or does not exist");
   return result;
 }
 
@@ -94,31 +88,26 @@ export class CliCloudAdapter {
     return { stdout };
   }
   async preflight(spec) {
-    const [aws, adb, ndcs] = await Promise.all([
-      this.execute("aws", ["ssm", "describe-instance-information", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--filters", `Key=InstanceIds,Values=${spec.awsRunner}`, "--output", "json"]),
-      this.execute("ssh", ["-i", spec.keyFile, "-o", "StrictHostKeyChecking=no", `opc@${spec.adbHost}`, `date -u; sudo podman image exists ${shellQuote(spec.image)}`]),
-      this.execute("ssh", ["-i", spec.keyFile, "-o", "StrictHostKeyChecking=no", `opc@${spec.ndcsHost}`, `date -u; sudo podman image exists ${shellQuote(spec.image)}`]),
-    ]); return { aws: JSON.parse(aws).InstanceInformationList?.[0]?.PingStatus, adb: adb.trim(), ndcs: ndcs.trim() };
+    const tasks = {};
+    if (spec.enabled.includes("aws")) tasks.aws = this.execute("aws", ["ssm", "describe-instance-information", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--filters", `Key=InstanceIds,Values=${spec.awsRunner}`, "--output", "json"]).then(raw => JSON.parse(raw).InstanceInformationList?.[0]?.PingStatus);
+    for (const target of ["adb", "ndcs"].filter(name => spec.enabled.includes(name))) { const host = target === "adb" ? spec.adbHost : spec.ndcsHost; tasks[target] = this.execute("ssh", ["-i", spec.keyFile, "-o", "StrictHostKeyChecking=no", `opc@${host}`, `date -u; sudo podman image exists ${shellQuote(spec.image)}`]).then(raw => raw.trim()); }
+    const entries = await Promise.all(Object.entries(tasks).map(async ([key, task]) => [key, await task])); return Object.fromEntries(entries);
   }
   async validateResources(spec) {
-    const [aws, ndcs] = await Promise.all([
-      this.execute("aws", ["dynamodb", "describe-table", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--table-name", spec.awsTable, "--output", "json"]),
-      this.execute("oci", ["nosql", "table", "get", "--profile", spec.ociProfile, "--region", spec.ociRegion, "--table-name-or-id", spec.ndcsTable, "--compartment-id", spec.compartment, "--output", "json"]),
-    ]);
-    const adb = await this.oci(spec, "adb", "doctor", `/opt/kvs-dashboard/${spec.runId}/validation/adb`, null);
-    const adbDoctor = JSON.parse(adb.stdout);
-    const blocking = adbDoctor.checks.filter(check => check.required && !check.passed && !(check.name === "provisioned-capacity" && check.detail?.expected && Object.keys(check.detail.expected).length === 0));
-    if (blocking.length) throw new Error(`ADB doctor did not pass: ${blocking.map(check => check.name).join(", ")}`);
-    return { aws: JSON.parse(aws).Table, ndcs: JSON.parse(ndcs).data, adb: adbDoctor.table };
+    const result = {};
+    if (spec.enabled.includes("aws")) result.aws = JSON.parse(await this.execute("aws", ["dynamodb", "describe-table", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--table-name", spec.awsTable, "--output", "json"])).Table;
+    if (spec.enabled.includes("ndcs")) result.ndcs = JSON.parse(await this.execute("oci", ["nosql", "table", "get", "--profile", spec.ociProfile, "--region", spec.ociRegion, "--table-name-or-id", spec.ndcsTable, "--compartment-id", spec.compartment, "--output", "json"])).data;
+    if (spec.enabled.includes("adb")) { const adbDoctor = JSON.parse((await this.oci(spec, "adb", "doctor", `/opt/kvs-dashboard/${spec.runId}/validation/adb`, null)).stdout); const blocking = adbDoctor.checks.filter(check => check.required && !check.passed && !(check.name === "provisioned-capacity" && check.detail?.expected && Object.keys(check.detail.expected).length === 0)); if (blocking.length) throw new Error(`ADB doctor did not pass: ${blocking.map(check => check.name).join(", ")}`); const endpoint = adbDoctor.checks.find(check => check.name === "adb-endpoint")?.detail; if (spec.adbDatabaseId && !String(endpoint).includes(spec.adbDatabaseId)) throw new Error("Selected Autonomous Database does not match the ADB runner endpoint"); result.adb = adbDoctor.table; }
+    return result;
   }
   async stage(spec, action, startAt = null) {
     const base = `/opt/kvs-dashboard/${spec.runId}/${action}`;
-    return Promise.all([this.aws(spec, action, `${base}/aws`, startAt), this.oci(spec, "adb", action, `${base}/adb`, startAt), this.oci(spec, "ndcs", action, `${base}/ndcs`, startAt)]);
+    return Promise.all(spec.enabled.map(target => target === "aws" ? this.aws(spec, action, `${base}/aws`, startAt) : this.oci(spec, target, action, `${base}/${target}`, startAt)));
   }
   async collect(spec, action) {
     const local = path.join(spec.localOutput, "evidence", action); fs.mkdirSync(local, { recursive: true });
-    await this.execute("aws", ["s3", "cp", `s3://${spec.bucket}/results/${spec.runId}/${action}/aws`, path.join(local, "aws"), "--recursive", "--only-show-errors", "--profile", spec.awsProfile, "--region", spec.awsRegion]);
-    await Promise.all([["adb", spec.adbHost], ["ndcs", spec.ndcsHost]].map(async ([target, host]) => {
+    if (spec.enabled.includes("aws")) await this.execute("aws", ["s3", "cp", `s3://${spec.bucket}/results/${spec.runId}/${action}/aws`, path.join(local, "aws"), "--recursive", "--only-show-errors", "--profile", spec.awsProfile, "--region", spec.awsRegion]);
+    await Promise.all([["adb", spec.adbHost], ["ndcs", spec.ndcsHost]].filter(([target]) => spec.enabled.includes(target)).map(async ([target, host]) => {
       const destination = path.join(local, target); fs.mkdirSync(destination, { recursive: true });
       await this.execute("scp", ["-r", "-i", spec.keyFile, "-o", "StrictHostKeyChecking=no", `opc@${host}:/opt/kvs-dashboard/${spec.runId}/${action}/${target}/.`, `${destination}/`]);
     }));
@@ -130,7 +119,8 @@ function readJson(file) { return JSON.parse(fs.readFileSync(file, "utf8")); }
 function allFiles(directory) { return fs.readdirSync(directory, { recursive: true, withFileTypes: true }).filter(item => item.isFile()).map(item => path.join(item.parentPath || item.path, item.name)); }
 function packageRun(state) {
   const summaries = state.summaries; const rows = Object.entries(summaries).map(([target, value]) => `<tr><td>${target.toUpperCase()}</td><td>${value.actualStartAt}</td><td>${value.startSkewMs}</td><td>${value.completed}/${value.scheduled}</td><td>${value.successfulServiceLatencyMs?.p95 ?? "-"}</td><td>${value.successfulServiceLatencyMs?.p99 ?? "-"}</td><td>${value.successfulServiceLatencyMs?.max ?? "-"}</td></tr>`).join("");
-  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><title>KVS cloud acceptance</title><style>body{max-width:1100px;margin:40px auto;font:15px system-ui;color:#172033}table{width:100%;border-collapse:collapse}th,td{padding:9px;border-bottom:1px solid #ddd;text-align:left}.ok{color:#087a55}</style><h1>KVS cloud acceptance</h1><p class="ok"><b>COMPLETE</b> — synchronized client-side smoke test from the three regional runners.</p><p>Dataset SHA-256: <code>${state.certificates.aws.observedSha256}</code>. Shared T0: <code>${state.sharedStartAt}</code>.</p><table><thead><tr><th>Target</th><th>Actual start UTC</th><th>Start skew ms</th><th>Completed</th><th>P95 ms</th><th>P99 ms</th><th>Max ms</th></tr></thead><tbody>${rows}</tbody></table><h2>Evidence</h2><p>The ZIP contains preload records, strong-read dataset certificates, operation-level NDJSON, telemetry, summaries, clock evidence, stage events, and SHA-256 manifest.</p></html>`;
+  const certificate = Object.values(state.certificates)[0];
+  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><title>KVS cloud acceptance</title><style>body{max-width:1100px;margin:40px auto;font:15px system-ui;color:#172033}table{width:100%;border-collapse:collapse}th,td{padding:9px;border-bottom:1px solid #ddd;text-align:left}.ok{color:#087a55}</style><h1>KVS cloud acceptance</h1><p class="ok"><b>COMPLETE</b> — synchronized client-side smoke test from ${state.spec.enabled.map(value => value.toUpperCase()).join(", ")}.</p><p>Dataset SHA-256: <code>${certificate.observedSha256}</code>. Shared T0: <code>${state.sharedStartAt}</code>.</p><table><thead><tr><th>Target</th><th>Actual start UTC</th><th>Start skew ms</th><th>Completed</th><th>P95 ms</th><th>P99 ms</th><th>Max ms</th></tr></thead><tbody>${rows}</tbody></table><h2>Evidence</h2><p>The ZIP contains preload records, strong-read dataset certificates, operation-level NDJSON, telemetry, summaries, clock evidence, stage events, and SHA-256 manifest.</p></html>`;
   fs.writeFileSync(path.join(state.output, "index.html"), html);
   fs.writeFileSync(path.join(state.output, "run-state.json"), `${JSON.stringify(visible(state), null, 2)}\n`);
   const files = allFiles(state.output).filter(file => !file.endsWith(".zip") && !file.endsWith("manifest-sha256.json"));
@@ -146,7 +136,7 @@ export class CloudAcceptanceRuns {
     if ([...this.runs.values()].some(run => ["queued", "running"].includes(run.status))) throw new Error("A cloud acceptance run is already active");
     const spec = validate(input, this.keyFile), id = `cloud-${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(3).toString("hex")}`, output = path.join(this.outputRoot, id);
     Object.assign(spec, { runId: id, localOutput: output });
-    const state = { id, spec, status: "queued", createdAt: new Date().toISOString(), output, outputRelative: path.relative(repositoryRoot, output).replaceAll("\\", "/"), stages: stages.map(stageView), targetStatus: Object.fromEntries(["aws", "adb", "ndcs"].map(name => [name, "pending"])) };
+    const state = { id, spec, status: "queued", createdAt: new Date().toISOString(), output, outputRelative: path.relative(repositoryRoot, output).replaceAll("\\", "/"), stages: stages.map(stageView), targetStatus: Object.fromEntries(spec.enabled.map(name => [name, "pending"])) };
     this.runs.set(id, state); void this.execute(state); return visible(state);
   }
   get(id) { const state = this.runs.get(id); if (!state) throw new Error("Cloud run not found"); return visible(state); }
@@ -161,13 +151,13 @@ export class CloudAcceptanceRuns {
     try {
       await this.step(state, "runner-readiness", () => this.adapter.preflight(spec));
       await this.step(state, "resource-validation", () => this.adapter.validateResources(spec));
-      await this.step(state, "dataset-preload", async () => { state.targetStatus = { aws: "preloading", adb: "preloading", ndcs: "preloading" }; const value = await this.adapter.stage(spec, "preload"); state.targetStatus = { aws: "preloaded", adb: "preloaded", ndcs: "preloaded" }; return value.map(item => item.stdout?.slice(-120)); });
-      await this.step(state, "dataset-certification", async () => { state.targetStatus = { aws: "certifying", adb: "certifying", ndcs: "certifying" }; await this.adapter.stage(spec, "certify"); await this.adapter.collect(spec, "certify"); state.certificates = Object.fromEntries(["aws", "adb", "ndcs"].map(target => [target, readJson(path.join(state.output, "evidence", "certify", target, "dataset-certificate.json"))])); state.targetStatus = { aws: "certified", adb: "certified", ndcs: "certified" }; return Object.fromEntries(Object.entries(state.certificates).map(([key, value]) => [key, value.observedSha256])); });
+      await this.step(state, "dataset-preload", async () => { state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "preloading"])); const value = await this.adapter.stage(spec, "preload"); state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "preloaded"])); return value.map(item => item.stdout?.slice(-120)); });
+      await this.step(state, "dataset-certification", async () => { state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "certifying"])); await this.adapter.stage(spec, "certify"); await this.adapter.collect(spec, "certify"); state.certificates = Object.fromEntries(spec.enabled.map(target => [target, readJson(path.join(state.output, "evidence", "certify", target, "dataset-certificate.json"))])); state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "certified"])); return Object.fromEntries(Object.entries(state.certificates).map(([key, value]) => [key, value.observedSha256])); });
       await this.step(state, "dataset-hash-match", () => { const hashes = Object.values(state.certificates).map(value => value.observedSha256); if (new Set(hashes).size !== 1 || Object.values(state.certificates).some(value => !value.passed)) throw new Error("Dataset certificates do not match"); return hashes[0]; });
       await this.step(state, "t0-scheduled", () => { state.sharedStartAt = new Date(Math.ceil((Date.now() + 120_000) / 10_000) * 10_000).toISOString(); return state.sharedStartAt; });
-      await this.step(state, "workload", async () => { state.targetStatus = { aws: "running", adb: "running", ndcs: "running" }; await this.adapter.stage(spec, "run", state.sharedStartAt); state.targetStatus = { aws: "completed", adb: "completed", ndcs: "completed" }; });
+      await this.step(state, "workload", async () => { state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "running"])); await this.adapter.stage(spec, "run", state.sharedStartAt); state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "completed"])); });
       await this.step(state, "evidence-collection", () => this.adapter.collect(spec, "run"));
-      await this.step(state, "acceptance-validation", () => { state.summaries = Object.fromEntries(["aws", "adb", "ndcs"].map(target => [target, readJson(path.join(state.output, "evidence", "run", target, "summary.json"))])); const values = Object.values(state.summaries); if (values.some(value => !value.harnessPassed || value.accounted !== value.scheduled || value.failed !== 0)) throw new Error("One or more target summaries failed acceptance"); if (new Set(values.map(value => value.configSha256)).size !== 1 || new Set(values.map(value => value.scheduledStartAt)).size !== 1) throw new Error("Configuration hash or T0 differs across targets"); return { maximumStartSkewMs: Math.max(...values.map(value => Math.abs(value.startSkewMs))) }; });
+      await this.step(state, "acceptance-validation", () => { state.summaries = Object.fromEntries(spec.enabled.map(target => [target, readJson(path.join(state.output, "evidence", "run", target, "summary.json"))])); const values = Object.values(state.summaries); if (values.some(value => !value.harnessPassed || value.accounted !== value.scheduled || value.failed !== 0)) throw new Error("One or more target summaries failed acceptance"); if (new Set(values.map(value => value.configSha256)).size !== 1 || new Set(values.map(value => value.scheduledStartAt)).size !== 1) throw new Error("Configuration hash or T0 differs across targets"); return { maximumStartSkewMs: Math.max(...values.map(value => Math.abs(value.startSkewMs))) }; });
       await this.step(state, "package-generation", () => packageRun(state));
       state.status = "complete"; state.completedAt = new Date().toISOString();
     } catch (error) { state.status = "failed"; state.error = error.message; state.completedAt = new Date().toISOString(); }

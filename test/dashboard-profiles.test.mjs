@@ -1,9 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { discoverAwsProfiles, discoverOciProfiles, parseOciProfiles } from "../src/dashboard/profiles.mjs";
+import { discoverAwsProfiles, discoverOciProfiles, parseOciProfiles, parseOciProfileValues } from "../src/dashboard/profiles.mjs";
 
 test("OCI profile parser returns unique sorted section names", () => {
   assert.deepEqual(parseOciProfiles("[PITWALL_API]\nkey_file=x\n[DEFAULT]\n[PITWALL_API]\n"), ["DEFAULT", "PITWALL_API"]);
+});
+
+test("OCI profile values are scoped to the selected section", () => {
+  const text = "[DEFAULT]\ntenancy=ocid.default\n[TEAM]\ntenancy = ocid.team\nregion=us-ashburn-1\n";
+  assert.deepEqual(parseOciProfileValues(text, "TEAM"), { tenancy: "ocid.team", region: "us-ashburn-1" });
 });
 
 test("profile discovery exposes names without credential values", async () => {

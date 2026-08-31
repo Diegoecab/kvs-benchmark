@@ -8,7 +8,8 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   const localSmokeRuns = { start: options => { assert.equal(options.mode, "async"); return smoke; }, get: id => { if (id !== smoke.id) throw new Error("not local"); return smoke; } };
   const cloudRuns = { keyFile: "configured", start: options => { assert.equal(options.writeAuthorization, true); return cloud; }, get: id => { assert.equal(id, cloud.id); return cloud; } };
   const runnerDiscovery = async options => { assert.equal(options.awsProfile, "dynamodb_poc"); return { aws: [], oci: [], artifactBuckets: [] }; };
-  const { server, token } = createDashboardServer({ profileDiscovery: async () => ({ aws: ["dynamodb_poc"], oci: ["PITWALL_API"], warnings: [], sources: {} }), runnerDiscovery, localSmokeRuns, cloudRuns });
+  const destinationDiscovery = async options => { assert.equal(options.keyFile, "configured"); return { awsTables: ["table"], compartments: [] }; };
+  const { server, token } = createDashboardServer({ profileDiscovery: async () => ({ aws: ["dynamodb_poc"], oci: ["PITWALL_API"], warnings: [], sources: {} }), runnerDiscovery, destinationDiscovery, localSmokeRuns, cloudRuns });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   t.after(() => new Promise(resolve => server.close(resolve)));
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -30,6 +31,7 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   assert.equal(smokeStatus.summary.harnessPassed, true);
   const discovered = await fetch(`${origin}/api/discover-runners`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ awsProfile: "dynamodb_poc" }) });
   assert.equal(discovered.status, 200);
+  const destinations = await fetch(`${origin}/api/discover-destinations`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: "{}" }); assert.equal(destinations.status, 200); assert.deepEqual((await destinations.json()).awsTables, ["table"]);
   const startedCloud = await fetch(`${origin}/api/cloud-acceptance`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ writeAuthorization: true }) });
   assert.equal(startedCloud.status, 202); assert.equal((await startedCloud.json()).id, cloud.id);
   const cloudStatus = await fetch(`${origin}/api/runs/${cloud.id}`).then(response => response.json()); assert.equal(cloudStatus.kind, "cloud-acceptance");

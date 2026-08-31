@@ -59,7 +59,7 @@ Then open `http://127.0.0.1:4177` and follow the five-step wizard. The command i
 2. Keep **Use existing infrastructure** selected; managed infrastructure is plan-only.
 3. Select workload profiles and optional overrides. Model-specific overrides are applied only where compatible.
 4. Select **Async** (default) or **Live**.
-5. Review the immutable matrix and select either **Run local functional test** or **Run cloud acceptance test**.
+5. Review the immutable matrix and select either **Run local functional test** or **Run cloud acceptance test**. Cloud acceptance supports any one, two, or all three enabled products.
 
 The local functional test is safe and does not contact AWS or OCI. It runs a two-second in-memory workload through the real scheduler, metrics, report, and packaging path. When it reaches `COMPLETE`, select **Download benchmark output (.zip)**. The ZIP contains the standalone HTML report, operation and telemetry evidence, final summary, effective configuration, and SHA-256 manifest. Evidence is also written under `.kvs/runs/<run-id>/`.
 

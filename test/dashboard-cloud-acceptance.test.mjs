@@ -40,3 +40,15 @@ test("cloud adapter source remains platform-neutral", () => {
   assert.doesNotMatch(source, /\.cmd\b|powershell|[A-Z]:\\\\/i);
   for (const executable of ["aws", "oci", "ssh", "scp"]) assert.match(source, new RegExp(`"${executable}"`));
 });
+
+test("cloud acceptance can run a single enabled target without requiring OCI settings", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-cloud-single-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const adapter = {
+    preflight: async spec => ({ aws: spec.enabled.includes("aws") ? "Online" : null }), validateResources: async () => ({ aws: { state: "ACTIVE" } }), stage: async () => [{ stdout: "ok" }],
+    collect: async (spec, action) => { const dir = path.join(spec.localOutput, "evidence", action, "aws"); fs.mkdirSync(dir, { recursive: true }); if (action === "certify") fs.writeFileSync(path.join(dir, "dataset-certificate.json"), JSON.stringify({ target: "aws", observedSha256: hash, passed: true })); else fs.writeFileSync(path.join(dir, "summary.json"), JSON.stringify({ target: "aws", configSha256: hash, scheduledStartAt: "2026-01-01T00:00:00.000Z", actualStartAt: "2026-01-01T00:00:00.000Z", startSkewMs: 0, scheduled: 20, accounted: 20, completed: 20, failed: 0, harnessPassed: true, successfulServiceLatencyMs: { p95: 1, p99: 2, max: 3 } })); },
+  };
+  const single = structuredClone(input); single.targets.adb.enabled = false; single.targets.ndcs.enabled = false;
+  const runs = new CloudAcceptanceRuns({ outputRoot: root, adapter }); const started = runs.start(single); let current = started;
+  for (let attempt = 0; attempt < 100 && !["complete", "failed"].includes(current.status); attempt += 1) { await new Promise(resolve => setTimeout(resolve, 10)); current = runs.get(started.id); }
+  assert.equal(current.status, "complete"); assert.deepEqual(Object.keys(current.targetStatus), ["aws"]); assert.deepEqual(Object.keys(current.summaries), ["aws"]);
+});

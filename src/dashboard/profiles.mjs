@@ -15,6 +15,23 @@ export function parseOciProfiles(text) {
   return profiles.sort((a, b) => a.localeCompare(b));
 }
 
+export function parseOciProfileValues(text, profile) {
+  let current = null; const values = {};
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const section = raw.match(/^\s*\[([^\]]+)]\s*$/); if (section) { current = section[1].trim(); continue; }
+    if (current !== profile || /^\s*[#;]/.test(raw)) continue;
+    const property = raw.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/); if (property) values[property[1].toLowerCase()] = property[2];
+  }
+  return values;
+}
+
+export async function readOciProfileValues(profile, { file = ociConfigPath(), read = fs.promises.readFile } = {}) {
+  if (!/^[A-Za-z0-9_.-]+$/.test(profile || "")) throw new Error("A valid OCI profile is required");
+  const values = parseOciProfileValues(await read(file, "utf8"), profile);
+  if (!values.tenancy) throw new Error(`OCI profile ${profile} has no tenancy setting`);
+  return values;
+}
+
 export async function discoverAwsProfiles({ run = execFileAsync } = {}) {
   try {
     const { stdout } = await run("aws", ["configure", "list-profiles"], { windowsHide: true, timeout: 10_000, maxBuffer: 1024 * 1024 });

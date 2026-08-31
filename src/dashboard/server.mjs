@@ -8,6 +8,7 @@ import { listBenchmarkConfigs, previewMatrix } from "./preview.mjs";
 import { LocalSmokeRuns } from "./local-smoke.mjs";
 import { discoverRegionalRunners } from "./remote-control.mjs";
 import { CloudAcceptanceRuns, defaultImage } from "./cloud-acceptance.mjs";
+import { discoverDestinations } from "./destination-discovery.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const publicDirectory = path.join(moduleDirectory, "public");
@@ -32,7 +33,7 @@ function safeAsset(urlPath) {
   return file.startsWith(publicDirectory + path.sep) ? file : null;
 }
 
-export function createDashboardServer({ token = crypto.randomBytes(24).toString("base64url"), profileDiscovery = discoverProfiles, runnerDiscovery = discoverRegionalRunners, localSmokeRuns = new LocalSmokeRuns(), cloudRuns = new CloudAcceptanceRuns() } = {}) {
+export function createDashboardServer({ token = crypto.randomBytes(24).toString("base64url"), profileDiscovery = discoverProfiles, runnerDiscovery = discoverRegionalRunners, destinationDiscovery = discoverDestinations, localSmokeRuns = new LocalSmokeRuns(), cloudRuns = new CloudAcceptanceRuns() } = {}) {
   const findRun = id => { try { return localSmokeRuns.get(id); } catch { return cloudRuns.get(id); } };
   const findDownload = id => { try { return localSmokeRuns.download(id); } catch { return cloudRuns.download(id); } };
   const server = http.createServer(async (request, response) => {
@@ -40,7 +41,7 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
       const url = new URL(request.url, "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/api/bootstrap") {
         const profiles = await profileDiscovery();
-        return json(response, 200, { schemaVersion: 1, csrfToken: token, profiles, configs: listBenchmarkConfigs(configDirectory), capabilities: { existingInfrastructure: true, managedInfrastructure: false, cloudExecution: true, cloudSshConfigured: Boolean(cloudRuns.keyFile), localMockExecution: true, liveProgress: true }, defaults: { awsRegion: "us-east-1", ociRegion: "us-ashburn-1", imageDigest: defaultImage } });
+        return json(response, 200, { schemaVersion: 1, csrfToken: token, profiles, configs: listBenchmarkConfigs(configDirectory), capabilities: { existingInfrastructure: true, managedInfrastructure: false, cloudExecution: true, destinationLookup: true, cloudSshConfigured: Boolean(cloudRuns.keyFile), localMockExecution: true, liveProgress: true }, defaults: { awsRegion: "us-east-1", ociRegion: "us-ashburn-1", imageDigest: defaultImage } });
       }
       if (request.method === "POST" && url.pathname === "/api/preview") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
@@ -49,6 +50,10 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
       if (request.method === "POST" && url.pathname === "/api/discover-runners") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
         return json(response, 200, await runnerDiscovery(await body(request)));
+      }
+      if (request.method === "POST" && url.pathname === "/api/discover-destinations") {
+        if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
+        return json(response, 200, await destinationDiscovery({ ...await body(request), keyFile: cloudRuns.keyFile }));
       }
       if (request.method === "POST" && url.pathname === "/api/local-smoke") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });

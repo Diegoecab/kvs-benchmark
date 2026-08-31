@@ -27,6 +27,10 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(html, /id="start-benchmark"[^>]*>Run cloud acceptance test/);
   assert.match(html, /id="start-smoke"[^>]*>Run local functional test/);
   assert.match(html, /id="discover-runners"/);
+  assert.match(html, /id="lookup-destinations"/);
+  assert.match(html, /id="adb-compartment"/);
+  assert.match(html, /id="ndcs-compartment"/);
+  assert.match(html, /one, two, or three enabled targets/);
   assert.match(html, /id="pipeline"/);
   assert.doesNotMatch(html, /Cloud execution adapter pending/);
   assert.match(app, /syncOverrideApplicability/);

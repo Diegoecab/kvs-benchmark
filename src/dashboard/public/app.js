@@ -8,6 +8,7 @@ let bootstrap = null;
 let lastSpec = null;
 let currentStep = 1;
 let discovered = null;
+let destinations = null;
 
 function selected(select, preferred) { if (!select.options.length) return; ([...select.options].find(option => option.value === preferred) || select.options[0]).selected = true; }
 function profiles(select, values, preferred) { select.replaceChildren(...values.map(item => new Option(item, item))); selected(select, preferred); }
@@ -47,12 +48,13 @@ async function load() {
 
 function runMode() { return document.querySelector('input[name="run-mode"]:checked').value; }
 function selectedRunner(id) { return discovered?.oci?.find(item => item.id === value(id)) || discovered?.aws?.find(item => item.id === value(id)) || {}; }
+function resourceValue(prefix) { return value(prefix) === "__manual__" ? value(`${prefix}-manual`) : value(prefix); }
 function specification() {
   const mode = document.querySelector('input[name="infra-mode"]:checked').value;
   const overrides = { durationSeconds: optionalNumber("duration"), readPercent: optionalNumber("read-percent"), writePercent: optionalNumber("write-percent"), rateMultiplier: optionalNumber("rate-multiplier"), fixedConcurrency: optionalNumber("fixed-concurrency"), consistency: value("consistency") || undefined, executionMode: value("execution-mode") || undefined };
   Object.keys(overrides).forEach(key => overrides[key] === undefined && delete overrides[key]);
   const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
-  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: $("aws-enabled").checked, profile: value("aws-profile"), region: value("aws-region"), resource: value("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: $("adb-enabled").checked, profile: value("adb-profile"), region: value("adb-region"), resource: value("adb-table"), runnerId: value("adb-runner"), runnerHost: adbRunner.publicIp, compartmentId: adbRunner.compartmentId }, ndcs: { enabled: $("ndcs-enabled").checked, profile: value("ndcs-profile"), region: value("ndcs-region"), resource: value("ndcs-table"), runnerId: value("ndcs-runner"), runnerHost: ndcsRunner.publicIp, compartmentId: ndcsRunner.compartmentId } }, configs: [...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value), repetitions: Number(value("repetitions")), overrides, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
+  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: $("aws-enabled").checked, profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: $("adb-enabled").checked, profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerHost: adbRunner.publicIp, compartmentId: value("adb-compartment") }, ndcs: { enabled: $("ndcs-enabled").checked, profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerHost: ndcsRunner.publicIp, compartmentId: value("ndcs-compartment") } }, configs: [...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value), repetitions: Number(value("repetitions")), overrides, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
 }
 
 function runnerOptions(select, values, preferredPattern) {
@@ -70,6 +72,33 @@ async function discoverRunners() {
     $("runner-status").className = "callout"; $("runner-status").innerHTML = `<b>Discovery complete.</b> ${discovered.aws.length} AWS and ${discovered.oci.length} OCI runner(s); ${discovered.artifactBuckets?.length || 0} evidence bucket(s).`;
   } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error.message; }
   finally { $("discover-runners").disabled = false; }
+}
+
+function lookupOptions(select, items, { label = item => item.name || item, valueOf = item => item.id || item, placeholder = "Select a discovered value", manual = false, preferred } = {}) {
+  const options = [new Option(placeholder, ""), ...items.map(item => new Option(label(item), valueOf(item)))]; if (manual) options.push(new Option("Enter manually...", "__manual__")); select.replaceChildren(...options);
+  if (preferred && [...select.options].some(option => option.value === preferred)) select.value = preferred; else if (items.length === 1) select.value = valueOf(items[0]);
+}
+
+function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) !== "__manual__"; }
+
+async function lookupDestinations() {
+  $("lookup-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Reading accessible OCI compartments and available tables without modifying them...";
+  try {
+    const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
+    const request = { awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile: value("adb-profile") || value("ndcs-profile"), ociRegion: value("adb-region") || value("ndcs-region"), adbCompartmentId: value("adb-compartment") || adbRunner.compartmentId, ndcsCompartmentId: value("ndcs-compartment") || ndcsRunner.compartmentId, adbRunnerHost: adbRunner.publicIp, targets: { aws: $("aws-enabled").checked, adb: $("adb-enabled").checked, ndcs: $("ndcs-enabled").checked } };
+    const response = await fetch("/api/discover-destinations", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(request) }); destinations = await response.json(); if (!response.ok) throw new Error(destinations.error || `Destination lookup failed (${response.status})`);
+    const previousAdbCompartment = request.adbCompartmentId, previousNdcsCompartment = request.ndcsCompartmentId;
+    lookupOptions($("adb-compartment"), destinations.compartments, { label: item => item.path, preferred: previousAdbCompartment, placeholder: "Select an accessible compartment" });
+    lookupOptions($("ndcs-compartment"), destinations.compartments, { label: item => item.path, preferred: previousNdcsCompartment, placeholder: "Select an accessible compartment" });
+    lookupOptions($("aws-table"), destinations.awsTables, { valueOf: item => item, label: item => item, placeholder: "Select an AWS table", manual: true, preferred: resourceValue("aws-table") });
+    lookupOptions($("adb-database"), destinations.autonomousDatabases, { label: item => `${item.name} | ${item.state} | ${item.computeCount ?? item.cpuCoreCount ?? "?"} compute`, preferred: destinations.adbRuntimeDatabaseId, placeholder: "Select an Autonomous Database" });
+    lookupOptions($("adb-table"), destinations.adbTables, { valueOf: item => item, label: item => item, placeholder: "Select a DynamoDB-API table", manual: true, preferred: resourceValue("adb-table") });
+    lookupOptions($("ndcs-table"), destinations.nosqlTables, { label: item => `${item.name} | ${item.state} | ${item.readUnits ?? "?"} RU / ${item.writeUnits ?? "?"} WU`, valueOf: item => item.name, placeholder: "Select an OCI NoSQL table", manual: true, preferred: resourceValue("ndcs-table") });
+    for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
+    const mismatch = destinations.adbRuntimeDatabaseId && value("adb-database") !== destinations.adbRuntimeDatabaseId;
+    $("runner-status").className = `callout${mismatch ? " warning" : ""}`; $("runner-status").innerHTML = `<b>Lookup complete.</b> ${destinations.compartments.length} OCI compartment(s), ${destinations.awsTables.length} AWS table(s), ${destinations.adbTables.length} ADB DynamoDB-API table(s), and ${destinations.nosqlTables.length} OCI NoSQL table(s).${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}`;
+  } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error.message; }
+  finally { $("lookup-destinations").disabled = false; }
 }
 
 function renderReview() {
@@ -137,6 +166,8 @@ async function startCloud() {
 document.querySelectorAll('input[name="infra-mode"]').forEach(input => input.addEventListener("change", () => $("managed-fields").classList.toggle("hidden", document.querySelector('input[name="infra-mode"]:checked').value !== "managed")));
 document.querySelectorAll("[data-go-step]").forEach(button => button.addEventListener("click", () => showStep(Number(button.dataset.goStep))));
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
-$("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-runners").addEventListener("click", discoverRunners); $("refresh").addEventListener("click", () => load().catch(showLoadError));
+for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => syncManual(prefix));
+for (const id of ["adb-compartment", "ndcs-compartment"]) $(id).addEventListener("change", () => { if (destinations) void lookupDestinations(); });
+$("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-runners").addEventListener("click", discoverRunners); $("lookup-destinations").addEventListener("click", lookupDestinations); $("refresh").addEventListener("click", () => load().catch(showLoadError));
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
 showStep(1); load().catch(showLoadError);
