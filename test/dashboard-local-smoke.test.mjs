@@ -17,7 +17,8 @@ test("local dashboard smoke run executes the real harness and persists evidence"
     client: { maxConnections: 4, requestTimeoutMs: 1000, connectionTimeoutMs: 1000, maxAttempts: 1 },
   }));
   const runs = new LocalSmokeRuns({ configFile, outputRoot: path.join(root, "runs"), startDelayMs: 20 });
-  const started = runs.start();
+  const started = runs.start({ mode: "async" });
+  assert.equal(started.mode, "async");
   assert.equal(started.progress.scheduled, 2);
   let current = started;
   for (let attempt = 0; attempt < 50 && !["complete", "failed"].includes(current.status); attempt += 1) {
@@ -29,4 +30,7 @@ test("local dashboard smoke run executes the real harness and persists evidence"
   assert.equal(current.summary.harnessPassed, true);
   const output = path.join(root, "runs", started.id);
   for (const file of ["operations.ndjson", "telemetry.ndjson", "summary.json", "run-config.json"]) assert.equal(fs.existsSync(path.join(output, file)), true);
+  for (const file of ["index.html", "manifest-sha256.json", `${started.id}-benchmark-output.zip`]) assert.equal(fs.existsSync(path.join(output, file)), true);
+  assert.match(fs.readFileSync(path.join(output, "index.html"), "utf8"), /KVS local smoke benchmark/);
+  assert.equal(fs.readFileSync(runs.download(started.id)).readUInt32LE(0), 0x04034b50);
 });

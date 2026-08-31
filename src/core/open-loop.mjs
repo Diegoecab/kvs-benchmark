@@ -27,9 +27,10 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   const cpuStart = process.cpuUsage();
   const loopDelay = monitorEventLoopDelay({ resolution: 10 });
   loopDelay.enable();
-  const progress = () => {
+  const progress = record => {
     if (!onProgress) return;
-    try { onProgress({ scheduled: operations.length, accounted: completed + Object.values(errors).reduce((sum, value) => sum + value, 0), completed, failed: Object.values(errors).reduce((sum, value) => sum + value, 0) - schedulerDrops, schedulerDrops, at: new Date().toISOString() }); } catch {}
+    const elapsedSeconds = Math.max(0.001, (Date.now() - actualStartEpochMs) / 1000);
+    try { onProgress({ scheduled: operations.length, accounted: completed + Object.values(errors).reduce((sum, value) => sum + value, 0), completed, failed: Object.values(errors).reduce((sum, value) => sum + value, 0) - schedulerDrops, schedulerDrops, inFlight: inFlight.size, achievedOperationsPerSecond: completed / elapsedSeconds, latestOperation: record?.operation || null, latestLatencyMs: record?.serviceLatencyMs ?? null, latestError: record?.error?.name || null, at: new Date().toISOString() }); } catch {}
   };
 
   const telemetryTimer = setInterval(() => {
@@ -53,7 +54,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
       schedulerDrops += 1;
       errors.ClientSchedulerDrop = (errors.ClientSchedulerDrop || 0) + 1;
       operationsOutput.write(`${JSON.stringify({ ...operation, scheduledEpochMs, startedEpochMs, endedEpochMs: startedEpochMs, queueDelayMs: fixed(queueDelayMs), serviceLatencyMs: 0, intendedLatencyMs: fixed(queueDelayMs), inFlightAtStart: inFlight.size, error: { name: "ClientSchedulerDrop" } })}\n`);
-      progress();
+      progress({ ...operation, serviceLatencyMs: 0, error: { name: "ClientSchedulerDrop" } });
       continue;
     }
     const task = (async () => {
@@ -73,7 +74,7 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
       queueDelays.push(queueDelayMs);
       if (error) { errors[error.name] = (errors[error.name] || 0) + 1; failedService.push(serviceLatencyMs); }
       else { completed += 1; successfulService.push(serviceLatencyMs); successfulIntended.push(intendedLatencyMs); readUnits += record.readUnits; writeUnits += record.writeUnits; retries += Math.max(0, record.attempts - 1); }
-      progress();
+      progress(record);
     })();
     inFlight.add(task);
     task.finally(() => inFlight.delete(task));

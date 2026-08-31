@@ -44,8 +44,12 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
       }
       if (request.method === "POST" && url.pathname === "/api/local-smoke") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
-        await body(request);
-        return json(response, 202, localSmokeRuns.start());
+        return json(response, 202, localSmokeRuns.start(await body(request)));
+      }
+      if (request.method === "GET" && /^\/api\/runs\/[^/]+\/download$/.test(url.pathname)) {
+        const id = decodeURIComponent(url.pathname.split("/")[3]), file = localSmokeRuns.download(id), stat = fs.statSync(file);
+        response.writeHead(200, { "content-type": "application/zip", "content-length": stat.size, "content-disposition": `attachment; filename="${path.basename(file)}"`, "cache-control": "no-store", "x-content-type-options": "nosniff" });
+        return fs.createReadStream(file).pipe(response);
       }
       if (request.method === "GET" && url.pathname.startsWith("/api/runs/")) {
         return json(response, 200, localSmokeRuns.get(decodeURIComponent(url.pathname.slice("/api/runs/".length))));

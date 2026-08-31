@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { readConfig, scheduledOperationCount } from "../core/config.mjs";
 import { runOpenLoop } from "../core/open-loop.mjs";
 import { createMockProvider } from "../providers/mock.mjs";
+import { finalizeLocalArtifact } from "./artifact.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const defaultConfig = path.join(repositoryRoot, "configs", "smoke.json");
@@ -15,6 +16,7 @@ function visible(state) {
     schemaVersion: 1,
     id: state.id,
     kind: "local-mock-smoke",
+    mode: state.mode,
     status: state.status,
     createdAt: state.createdAt,
     startedAt: state.startedAt || null,
@@ -23,6 +25,7 @@ function visible(state) {
     progress: state.progress,
     summary: state.summary || null,
     error: state.error || null,
+    downloadUrl: state.archiveFile ? `/api/runs/${encodeURIComponent(state.id)}/download` : null,
   };
 }
 
@@ -34,13 +37,15 @@ export class LocalSmokeRuns {
     this.runs = new Map();
   }
 
-  start() {
+  start({ mode = "async" } = {}) {
+    if (!["async", "live"].includes(mode)) throw new Error("mode must be async or live");
     if ([...this.runs.values()].some(run => ["queued", "running"].includes(run.status))) throw new Error("A local smoke test is already running");
     const loaded = readConfig(this.configFile);
     const id = `smoke-${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(3).toString("hex")}`;
     const output = path.join(this.outputRoot, id);
     const state = {
       id,
+      mode,
       status: "queued",
       createdAt: new Date().toISOString(),
       output,
@@ -78,6 +83,7 @@ export class LocalSmokeRuns {
       state.summary = summary;
       state.status = summary.harnessPassed ? "complete" : "failed";
       state.completedAt = new Date().toISOString();
+      if (state.status === "complete") Object.assign(state, finalizeLocalArtifact(state));
     } catch (error) {
       state.status = "failed";
       state.error = error.message;
@@ -85,5 +91,11 @@ export class LocalSmokeRuns {
     } finally {
       await provider?.close();
     }
+  }
+
+  download(id) {
+    const state = this.runs.get(id);
+    if (!state?.archiveFile || !fs.existsSync(state.archiveFile)) throw new Error("Benchmark output is not ready");
+    return state.archiveFile;
   }
 }
