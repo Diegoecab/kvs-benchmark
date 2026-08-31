@@ -85,10 +85,10 @@ async function discoverRunners() {
   finally { $("discover-runners").disabled = false; }
 }
 
-function lookupOptions(select, items, { label = item => item?.name || item, valueOf = item => item?.id || item, placeholder = "Select a discovered value", manual = false, preferred } = {}) {
+function lookupOptions(select, items, { label = item => item?.name || item, getValue = item => item?.id || item, placeholder = "Select a discovered value", manual = false, preferred } = {}) {
   if (!select) throw new Error("Destination form is out of date; reload the dashboard page");
   const list = Array.isArray(items) ? items.filter(item => item != null) : [];
-  const normalized = list.map(item => ({ label: String(label(item) ?? "Unnamed"), value: String(valueOf(item) ?? "") }));
+  const normalized = list.map(item => ({ label: String(label(item) ?? "Unnamed"), value: String(getValue(item) ?? "") }));
   const selectedValue = preferred != null && normalized.some(item => item.value === String(preferred)) ? String(preferred) : normalized.length === 1 ? normalized[0].value : "";
   const optionHtml = [{ label: placeholder, value: "" }, ...normalized, ...(manual ? [{ label: "Enter manually...", value: "__manual__" }] : [])]
     .map(item => `<option value="${escapeHtml(item.value)}"${item.value === selectedValue ? " selected" : ""}>${escapeHtml(item.label)}</option>`).join("");
@@ -123,13 +123,13 @@ async function lookupDestinations() {
     stage = "OCI NoSQL compartment rendering";
     lookupOptions($("ndcs-compartment"), compartments, { label: item => item.path, preferred: previousNdcsCompartment, placeholder: "Select an accessible compartment" });
     stage = "AWS table rendering";
-    lookupOptions($("aws-table"), awsTables, { valueOf: item => item, label: item => item, placeholder: "Select an AWS table", manual: true, preferred: previous.awsTable });
+    lookupOptions($("aws-table"), awsTables, { getValue: item => item, label: item => item, placeholder: "Select an AWS table", manual: true, preferred: previous.awsTable });
     stage = "Autonomous Database rendering";
     lookupOptions($("adb-database"), databases, { label: item => `${item.name} | ${item.state} | ${item.computeCount ?? item.cpuCoreCount ?? "?"} compute`, preferred: destinations.adbRuntimeDatabaseId, placeholder: "Select an Autonomous Database" });
     stage = "ADB DynamoDB-API table rendering";
-    lookupOptions($("adb-table"), adbTables, { valueOf: item => item, label: item => item, placeholder: "Select a DynamoDB-API table", manual: true, preferred: previous.adbTable });
+    lookupOptions($("adb-table"), adbTables, { getValue: item => item, label: item => item, placeholder: "Select a DynamoDB-API table", manual: true, preferred: previous.adbTable });
     stage = "OCI NoSQL table rendering";
-    lookupOptions($("ndcs-table"), nosqlTables, { label: item => `${item.name} | ${item.state} | ${item.readUnits ?? "?"} RU / ${item.writeUnits ?? "?"} WU`, valueOf: item => item.name, placeholder: "Select an OCI NoSQL table", manual: true, preferred: previous.ndcsTable });
+    lookupOptions($("ndcs-table"), nosqlTables, { label: item => `${item.name} | ${item.state} | ${item.readUnits ?? "?"} RU / ${item.writeUnits ?? "?"} WU`, getValue: item => item.name, placeholder: "Select an OCI NoSQL table", manual: true, preferred: previous.ndcsTable });
     stage = "manual destination synchronization";
     for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
     const mismatch = destinations.adbRuntimeDatabaseId && value("adb-database") !== destinations.adbRuntimeDatabaseId;

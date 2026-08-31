@@ -46,6 +46,15 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(app, /Array\.isArray\(result\?\.oci\)/);
   assert.match(app, /select\.innerHTML = optionHtml/);
   assert.doesNotMatch(app, /function optionElement/);
+  assert.match(app, /getValue = item => item\?\.id \|\| item/);
+  assert.doesNotMatch(app, /valueOf = item/);
   assert.match(app, /ADB compartment rendering/);
   assert.match(app, /OCI NoSQL table rendering/);
+});
+
+test("destination option defaults do not collide with Object prototype methods", () => {
+  const options = { label: item => item.path };
+  const { getValue = item => item?.id || item } = options;
+  assert.equal(getValue({ id: "compartment-1", path: "tenancy root / test" }), "compartment-1");
+  assert.equal(Object.hasOwn(options, "getValue"), false);
 });
