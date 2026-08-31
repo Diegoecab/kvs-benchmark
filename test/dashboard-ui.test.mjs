@@ -22,6 +22,7 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(app, /function selectPresets/);
   assert.ok((html.match(/class="option-search"/g) || []).length >= 8);
   assert.match(app, /function filterOptions/);
+  assert.match(app, /select\.size = 1/);
   assert.match(html, /private S3 bucket/);
   assert.match(html, /id="cloud-aws"/); assert.match(html, /id="cloud-oci"/);
   assert.match(html, /No SSH, SCP, private key, or public IP is used/);
