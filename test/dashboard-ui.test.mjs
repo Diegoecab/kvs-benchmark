@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const html = fs.readFileSync(path.join(root, "src", "dashboard", "public", "index.html"), "utf8");
 const app = fs.readFileSync(path.join(root, "src", "dashboard", "public", "app.js"), "utf8");
+const theme = fs.readFileSync(path.join(root, "src", "dashboard", "public", "theme.css"), "utf8");
 
 test("dashboard exposes a five-step wizard with contextual workload help", () => {
   assert.equal((html.match(/class="wizard-panel"/g) || []).length, 5);
@@ -27,6 +28,7 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /id="cloud-aws"/); assert.match(html, /id="cloud-oci"/);
   assert.match(html, /No SSH, SCP, private key, or public IP is used/);
   assert.match(html, /Provisional performance timeline/); assert.match(app, /function renderLiveCharts/);
+  assert.match(html, /theme\.css/); assert.match(theme, /--bg-header: #1a1a2e/); assert.match(theme, /--accent-teal: #0e7a6e/);
 });
 
 test("dashboard defaults to async and exposes live progress and package download", () => {
@@ -44,6 +46,7 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.doesNotMatch(html, /id="discover-runners"/);
   assert.doesNotMatch(html, /id="lookup-destinations"/);
   assert.match(html, /id="adb-compartment"/);
+  assert.match(html, /id="adb-live-table-lookup"/);
   assert.match(html, /id="ndcs-compartment"/);
   assert.match(html, /against any enabled targets/i);
   assert.match(html, /id="pipeline"/);
@@ -62,6 +65,8 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(app, /OCI NoSQL table rendering/);
   assert.match(app, /adbOciProfile: value\("adb-profile"\)/);
   assert.match(app, /ndcsOciProfile: value\("ndcs-profile"\)/);
+  assert.match(app, /probeAdbTables: \$\("adb-live-table-lookup"\)\.checked/);
+  assert.match(app, /kvs-dashboard-adb-table/);
   assert.match(app, /destinations\.adbCompartments/);
   assert.match(app, /destinations\.ndcsCompartments/);
 });
