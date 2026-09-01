@@ -17,7 +17,12 @@ function execute(file, args, { timeout = 60_000 } = {}) {
 const parse = value => JSON.parse(value || "{}");
 const validProfile = value => /^[A-Za-z0-9_.-]+$/.test(value || "");
 const validRegion = value => /^[a-z]{2}-[a-z]+-\d$/.test(value || "");
-async function capture(errors, key, operation, fallback) { try { return await operation; } catch (error) { errors[key] = error?.message || String(error); return fallback; } }
+function conciseError(error) {
+  const message = error?.message || String(error);
+  if (/sudo: (?:a terminal is required|a password is required)|usual lecture/i.test(message)) return "Runner incompatible: the ocarun identity lacks passwordless sudo for Podman and protected runtime access. Replace or repair this runner before ADB table discovery.";
+  return message.length > 600 ? `${message.slice(0, 597)}...` : message;
+}
+async function capture(errors, key, operation, fallback) { try { return await operation; } catch (error) { errors[key] = conciseError(error); return fallback; } }
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 function awsTableRow(table, scalableTargets = []) {
@@ -39,7 +44,7 @@ export async function listAdbApiTables({ runnerId, runnerCompartmentId, profile,
   if (!/^ocid1\.(compartment|tenancy)\./.test(runnerCompartmentId || "")) throw new Error("A valid ADB runner compartment is required");
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-destination-"));
   const javascript = `import {DynamoDBClient,ListTablesCommand,DescribeTableCommand} from "@aws-sdk/client-dynamodb";const endpoint=process.env.DDB_ENDPOINT;const client=new DynamoDBClient({region:process.env.AWS_REGION,endpoint,maxAttempts:1});const listed=await client.send(new ListTablesCommand({}));const tables=await Promise.all((listed.TableNames||[]).map(async name=>{const result=await client.send(new DescribeTableCommand({TableName:name}));const table=result.Table||{};const billingMode=table.BillingModeSummary?.BillingMode||"PROVISIONED";return{name,status:table.TableStatus,billingMode,readCapacityUnits:billingMode==="PROVISIONED"?table.ProvisionedThroughput?.ReadCapacityUnits:null,writeCapacityUnits:billingMode==="PROVISIONED"?table.ProvisionedThroughput?.WriteCapacityUnits:null,autoscaling:{mode:"SERVICE_MANAGED"},itemCount:table.ItemCount,tableSizeBytes:table.TableSizeBytes}}));console.log(JSON.stringify({tables,databaseId:new URL(endpoint).pathname.split("/").filter(Boolean).at(-1)}));client.destroy();`;
-  const script = `#!/usr/bin/env bash\nset -euo pipefail\nruntime='${runtimeFile.replaceAll("'", "")}'\nexport AWS_ACCESS_KEY_ID="$(sudo jq -r .accessKeyId "$runtime")"\nexport AWS_SECRET_ACCESS_KEY="$(sudo jq -r .secretAccessKey "$runtime")"\nexport DDB_ENDPOINT="$(sudo jq -r .endpoint "$runtime")"\nsudo podman run --rm --network host --entrypoint node -e AWS_REGION=us-ashburn-1 -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT '${image}' --input-type=module --eval '${javascript}'\n`;
+  const script = `#!/usr/bin/env bash\nset -euo pipefail\nruntime='${runtimeFile.replaceAll("'", "")}'\nif ! sudo -n podman --version >/dev/null 2>&1 || ! sudo -n jq --version >/dev/null 2>&1; then echo "Runner incompatible: the ocarun identity lacks passwordless sudo for Podman and protected runtime access. Replace or repair this runner before ADB table discovery." >&2; exit 20; fi\nexport AWS_ACCESS_KEY_ID="$(sudo -n jq -r .accessKeyId "$runtime")"\nexport AWS_SECRET_ACCESS_KEY="$(sudo -n jq -r .secretAccessKey "$runtime")"\nexport DDB_ENDPOINT="$(sudo -n jq -r .endpoint "$runtime")"\nsudo -n podman run --rm --network host --entrypoint node -e AWS_REGION=us-ashburn-1 -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT '${image}' --input-type=module --eval '${javascript}'\n`;
   try {
     const result = await executeOciRunCommand({ executeCommand, profile, region, compartmentId: runnerCompartmentId, instanceId: runnerId, script, displayName: `kvs-list-adb-${crypto.randomBytes(4).toString("hex")}`, controlDirectory: folder, timeoutSeconds: 30, deliveryTimeoutSeconds: 300, cliTimeoutMs: 60_000 });
     const jsonLine = result.stdout.split(/\r?\n/).reverse().find(line => line.trim().startsWith("{"));

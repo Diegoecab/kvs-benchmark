@@ -145,10 +145,15 @@ function renderDestinationSummary() {
   }
   $("destination-summary").innerHTML = cards.join("");
 }
-function addDestination() {
+async function addDestination() {
   const name = activeTarget(), resource = resourceValue(`${name}-table`), runner = value(`${name}-runner`);
   if (!resource || resource === "__manual__") throw new Error("Select a table before adding the destination");
   if (!runner) throw new Error("Select a regional runner before adding the destination");
+  // Evidence only supplies a table name. Retrieve the selected ADB table's
+  // metadata before rendering its card whenever it is not already live.
+  if (name === "adb" && !destinations?.adbTables?.some(item => (item.name || item) === resource)) {
+    await lookupDestinations({ manageButton: false, probeAdbTables: true });
+  }
   selectedTargets.add(name); $("aws-enabled").checked = selectedTargets.has("aws"); $("adb-enabled").checked = selectedTargets.has("adb"); $("ndcs-enabled").checked = selectedTargets.has("ndcs");
   renderDestinationSummary(); renderDestinationDetails();
   $("runner-status").className = "callout"; $("runner-status").textContent = `${name.toUpperCase()} destination added. Choose another provider/product to add more.`;
@@ -185,6 +190,12 @@ function flagIncompatibleRunner(run) {
   incompatibleRunners.add(runner); localStorage.setItem(incompatibleRunnerKey, JSON.stringify([...incompatibleRunners]));
   const option = [...$(`${target}-runner`).options].find(item => item.value === runner); if (option) { option.disabled = true; option.textContent += " | INCOMPATIBLE: replace or repair"; }
   selectedTargets.delete(target); $(`${target}-enabled`).checked = false; $(`${target}-runner`).value = ""; renderDestinationSummary(); scheduleDraftSave();
+}
+function flagDiscoveredIncompatibleRunner(target, runner, message) {
+  if (!runner || !/Runner incompatible:/i.test(message || "")) return;
+  incompatibleRunners.add(runner); localStorage.setItem(incompatibleRunnerKey, JSON.stringify([...incompatibleRunners]));
+  const select = $(`${target}-runner`), option = [...select.options].find(item => item.value === runner); if (option) { option.disabled = true; if (!/INCOMPATIBLE/.test(option.textContent)) option.textContent += " | INCOMPATIBLE: replace or repair"; }
+  selectedTargets.delete(target); $(`${target}-enabled`).checked = false; select.value = ""; renderDestinationSummary(); scheduleDraftSave();
 }
 
 async function discoverRunners({ manageButton = true } = {}) {
@@ -224,6 +235,10 @@ function autoscalingLabel(table) {
   if (read || write) return [read && `Read ${read.min}-${read.max}`, write && `Write ${write.min}-${write.max}`].filter(Boolean).join("; ");
   return table?.autoscaling?.mode === "NOT_DETECTED" ? "Not configured / not exposed" : "Not configured";
 }
+function providerMark(target) {
+  if (target === "aws") return '<span class="provider-mark provider-mark-aws" role="img" aria-label="AWS"><svg viewBox="0 0 48 28" aria-hidden="true"><text x="2" y="17">aws</text><path d="M4 22c10 6 26 5 38-2"/></svg></span>';
+  return '<span class="provider-mark provider-mark-oracle" role="img" aria-label="Oracle Cloud"><svg viewBox="0 0 40 28" aria-hidden="true"><rect x="3" y="6" width="34" height="16" rx="8"/></svg></span>';
+}
 function detailCard(target, provider, table, verified = true) {
   if (!table) return "";
   const unavailable = verified ? "Not exposed by provider inventory" : "Not live-verified";
@@ -242,7 +257,7 @@ function detailCard(target, provider, table, verified = true) {
     ["Item count", verified ? table.itemCount == null ? unavailable : number(table.itemCount) : unavailable]
   ];
   const verification = verified ? "" : `<div class="resource-verification"><span>The name came from local evidence. Select the ADB runner and refresh available resources to retrieve live metadata automatically.</span></div>`;
-  return `<article class="resource-detail"><div class="resource-detail-heading"><h3>${escapeHtml(provider)} · ${escapeHtml(table.name)}</h3><button type="button" data-remove-destination="${target}" aria-label="Remove ${escapeHtml(provider)}">×</button></div><p>${verified ? "Live provider metadata" : "Selected destination · not live-verified"}</p><dl>${rows.map(([key, item]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(item)}</dd>`).join("")}</dl>${verification}</article>`;
+  return `<article class="resource-detail provider-${escapeHtml(target)}"><div class="resource-detail-heading"><h3>${providerMark(target)}<span>${escapeHtml(provider)} · ${escapeHtml(table.name)}</span></h3><button type="button" data-remove-destination="${target}" aria-label="Remove ${escapeHtml(provider)}">×</button></div><p>${verified ? "Live provider metadata" : "Selected destination · not live-verified"}</p><dl>${rows.map(([key, item]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(item)}</dd>`).join("")}</dl>${verification}</article>`;
 }
 function renderDestinationDetails() {
   renderDestinationSummary();
@@ -291,6 +306,7 @@ async function lookupDestinations({ manageButton = true, probeAdbTables = true }
     for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
     renderDestinationDetails();
     const mismatch = destinations.adbRuntimeDatabaseId && value("adb-database") !== destinations.adbRuntimeDatabaseId, partialErrors = Object.entries(destinations.discoveryErrors || {});
+    flagDiscoveredIncompatibleRunner("adb", adbRunner.id, destinations.discoveryErrors?.adbTables);
     const errorList = partialErrors.length ? `<ul>${partialErrors.map(([key, message]) => `<li><b>${escapeHtml(key)}:</b> ${escapeHtml(message)}</li>`).join("")}</ul>` : "";
     const countParts = [];
     if (request.targets.aws) countParts.push(`${awsTables.length} AWS table(s)`);
@@ -306,7 +322,7 @@ async function discoverDestinations({ automatic = false } = {}) {
   setDiscoveryBusy(true);
   try {
     const ready = await discoverRunners({ manageButton: false });
-    if (ready) await lookupDestinations({ manageButton: false, probeAdbTables: !automatic });
+    if (ready) await lookupDestinations({ manageButton: false, probeAdbTables: true });
   } finally { setDiscoveryBusy(false); }
 }
 
@@ -397,8 +413,8 @@ function renderExecutionLog(run) {
   terminalLogs = Array.isArray(run.logs) && run.logs.length ? run.logs : fallbackLogs(run);
   if (terminalPaused) return;
   const logs = terminalLogs.slice(terminalClearedCount), view = $("execution-log");
-  if (!logs.length) view.innerHTML = '<div class="terminal-empty"><span>$</span> Waiting for the next pipeline event...</div>';
-  else view.innerHTML = logs.map(item => { const timestamp = item.at ? new Date(item.at).toISOString().slice(11, 23) : "--:--:--.---"; return `<div class="terminal-row ${escapeHtml(item.level || "info")}"><span class="terminal-time">${escapeHtml(timestamp)}</span><span class="terminal-level">${escapeHtml(item.level || "info")}</span><span class="terminal-stage">${escapeHtml(item.stage || "pipeline")}</span><span class="terminal-target">${escapeHtml(item.target || "control")}</span><span class="terminal-message">${escapeHtml(item.message || "")}</span></div>`; }).join("");
+  if (!logs.length) view.innerHTML = '<div class="kvs-run-log-empty"><span>$</span> Waiting for the next pipeline event...</div>';
+  else view.innerHTML = logs.map(item => { const timestamp = item.at ? new Date(item.at).toISOString().slice(11, 23) : "--:--:--.---"; return `<div class="kvs-run-log-line level-${escapeHtml(item.level || "info")}"><span class="kvs-run-log-time">${escapeHtml(timestamp)}</span><span class="kvs-run-log-level">${escapeHtml(item.level || "info")}</span><span class="kvs-run-log-stage">${escapeHtml(item.stage || "pipeline")}</span><span class="kvs-run-log-target">${escapeHtml(item.target || "control")}</span><span class="kvs-run-log-message">${escapeHtml(item.message || "")}</span></div>`; }).join("");
   if ($("log-autoscroll").checked) view.scrollTop = view.scrollHeight;
 }
 
@@ -408,8 +424,8 @@ function showSmoke(run) {
   const accounting = cloud ? ` | ${session ? `session ${escapeHtml(session.id)} (${session.index}/${session.total}) | ` : ""}shared T0 ${escapeHtml(run.sharedStartAt || "pending")}` : ` | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted`;
   const running = ["queued", "running"].includes(run.status), statusIndicator = running ? '<span class="run-light" aria-hidden="true"></span>' : "";
   $("smoke-status").className = `callout run-status ${run.status}${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `${statusIndicator}<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
-  const stages = run.stages || [], processed = stages.filter(stage => ["complete", "failed"].includes(stage.status)).length, percentage = stages.length ? Math.round(processed * 100 / stages.length) : 0, activeStage = stages.find(stage => stage.status === "running"), failedStage = stages.find(stage => stage.status === "failed"), progressLabel = failedStage ? `Stopped at ${failedStage.name.replaceAll("-", " ")}` : activeStage ? `Running ${activeStage.name.replaceAll("-", " ")}` : percentage === 100 ? "All pipeline stages completed" : "Waiting to start";
-  $("pipeline").innerHTML = stages.length ? `<div class="pipeline-summary"><div class="pipeline-progress-heading"><div><b>${percentage}%</b><span>${escapeHtml(progressLabel)}</span></div><small>${processed} of ${stages.length} steps processed</small></div><div class="pipeline-track" role="progressbar" aria-label="Benchmark pipeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="width:${percentage}%"></span></div><ol class="pipeline-steps">${stages.map((stage, index) => { const symbol = stage.status === "complete" ? "✓" : stage.status === "failed" ? "!" : stage.status === "running" ? "●" : String(index + 1); return `<li class="${escapeHtml(stage.status)}" title="${escapeHtml(stage.detail || stage.status)}"><span>${symbol}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b></li>`; }).join("")}</ol></div>` : "";
+  const stages = run.stages || [], processed = stages.filter(stage => ["complete", "failed"].includes(stage.status)).length, activeStage = stages.find(stage => stage.status === "running"), failedStage = stages.find(stage => stage.status === "failed"), progressUnits = processed + (activeStage ? 0.5 : 0), percentage = stages.length ? Math.round(progressUnits * 100 / stages.length) : 0, progressLabel = failedStage ? `Stopped at ${failedStage.name.replaceAll("-", " ")}` : activeStage ? `Running ${activeStage.name.replaceAll("-", " ")}` : percentage === 100 ? "All pipeline stages completed" : "Waiting to start";
+  $("pipeline").innerHTML = stages.length ? `<div class="pipeline-summary"><div class="pipeline-progress-heading"><div><b>${percentage}%</b><span>${escapeHtml(progressLabel)}</span></div><small>${processed} of ${stages.length} steps completed</small></div><div class="pipeline-track" role="progressbar" aria-label="Benchmark pipeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="--pipeline-progress:${percentage / 100}"></span></div><ol class="pipeline-steps">${stages.map((stage, index) => { const symbol = stage.status === "complete" ? "✓" : stage.status === "failed" ? "!" : stage.status === "running" ? "●" : String(index + 1); return `<li class="${escapeHtml(stage.status)}" title="${escapeHtml(stage.detail || stage.status)}"><span>${symbol}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b></li>`; }).join("")}</ol></div>` : "";
   const targetMetrics = run.targetMetrics || {};
   const showLiveChart = cloud && run.mode === "live"; $("live-chart-panel").classList.toggle("hidden", !showLiveChart); if (showLiveChart) { captureLiveSample(run); if (!session) $("live-chart-caption").textContent = `Waiting for workload · current run status: ${run.status}`; renderLiveCharts(); }
   if (cloud && Object.keys(targetMetrics).length) $("live-stats").innerHTML = Object.entries(targetMetrics).map(([target, metric]) => `<div class="target-live provider-${escapeHtml(target)}"><h4>${escapeHtml(target.toUpperCase())}${metric.provisional ? " · LIVE PREVIEW" : " · FINAL"}</h4><div class="stats"><div class="stat"><span>Completed</span><b>${number(metric.completed)}</b></div><div class="stat"><span>Failed</span><b>${number(metric.failed)}</b></div><div class="stat"><span>Ops/s</span><b>${number(metric.operationsPerSecond)}</b></div><div class="stat"><span>In flight</span><b>${number(metric.inFlight)}</b></div><div class="stat"><span>Latest latency ms</span><b>${number(metric.latestLatencyMs)}</b></div><div class="stat"><span>${metric.provisional ? "Rolling P95 ms" : "Final P95 ms"}</span><b>${number(metric.rollingP95Ms ?? metric.p95)}</b></div><div class="stat"><span>Final P99 ms</span><b>${number(metric.p99)}</b></div><div class="stat"><span>Final max ms</span><b>${number(metric.max)}</b></div></div></div>`).join("");
@@ -441,7 +457,7 @@ async function startCloud() {
 document.querySelectorAll('input[name="infra-mode"]').forEach(input => input.addEventListener("change", () => $("managed-fields").classList.toggle("hidden", document.querySelector('input[name="infra-mode"]:checked').value !== "managed")));
 $("destination-cloud").addEventListener("change", () => { syncDestinationProducts(); discovered = null; destinations = null; void autoDiscoverActiveTarget(); });
 $("destination-product").addEventListener("change", () => { syncCloudCatalog(); discovered = null; destinations = null; void autoDiscoverActiveTarget(); });
-$("add-destination").addEventListener("click", () => { try { addDestination(); } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error.message; } });
+$("add-destination").addEventListener("click", async () => { try { await addDestination(); } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error.message; } });
 $("destination-summary").addEventListener("click", event => { const button = event.target.closest("[data-remove-destination]"); if (!button) return; selectedTargets.delete(button.dataset.removeDestination); $(`${button.dataset.removeDestination}-enabled`).checked = false; renderDestinationSummary(); renderDestinationDetails(); scheduleDraftSave(); });
 document.querySelectorAll("[data-go-step]").forEach(button => button.addEventListener("click", () => showStep(Number(button.dataset.goStep))));
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
@@ -461,7 +477,7 @@ for (const context of ["adb", "ndcs"]) for (const suffix of ["profile", "region"
 $("select-recommended").addEventListener("click", () => selectPresets(recommendedPreset)); $("select-all-presets").addEventListener("click", () => selectPresets(() => true)); $("clear-presets").addEventListener("click", () => selectPresets(() => false));
 $("image-digest").addEventListener("input", renderRunnerImage);
 $("pause-log").addEventListener("click", () => { terminalPaused = !terminalPaused; $("pause-log").textContent = terminalPaused ? "Resume" : "Pause"; $("pause-log").setAttribute("aria-pressed", String(terminalPaused)); if (!terminalPaused && terminalRunId) renderExecutionLog({ id: terminalRunId, logs: terminalLogs }); });
-$("clear-log").addEventListener("click", () => { terminalClearedCount = terminalLogs.length; $("execution-log").innerHTML = '<div class="terminal-empty"><span>$</span> View cleared. New events will continue to appear.</div>'; });
+$("clear-log").addEventListener("click", () => { terminalClearedCount = terminalLogs.length; $("execution-log").innerHTML = '<div class="kvs-run-log-empty"><span>$</span> View cleared. New events will continue to appear.</div>'; });
 $("copy-log").addEventListener("click", async () => { const button = $("copy-log"); try { await navigator.clipboard.writeText(terminalText(terminalLogs.slice(terminalClearedCount))); button.textContent = "Copied"; } catch { button.textContent = "Copy failed"; } setTimeout(() => { button.textContent = "Copy"; }, 1500); });
 $("reset-draft").addEventListener("click", () => { localStorage.removeItem(draftKey); localStorage.removeItem("kvs-dashboard-adb-table"); location.reload(); });
 document.querySelector("main").addEventListener("input", event => { if (!event.target.matches(".option-search") && event.target.id !== "write-authorization") scheduleDraftSave(); });

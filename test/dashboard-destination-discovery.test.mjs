@@ -67,3 +67,10 @@ test("destination lookup preserves healthy provider results when ADB table disco
   });
   assert.equal(result.awsTables[0].name, "healthy-aws"); assert.deepEqual(result.adbTables, []); assert.equal(result.discoveryErrors.adbTables, "Run Command policy missing");
 });
+
+test("destination lookup sanitizes interactive sudo output from an incompatible runner", async () => {
+  const tenancy = "ocid1.tenancy.test";
+  const result = await discoverDestinations({ targets: { aws: false, adb: true, ndcs: false }, adbOciProfile: "OCI", adbOciRegion: "us-ashburn-1", adbRunnerId: "ocid1.instance.test", adbRunnerCompartmentId: "ocid1.compartment.test", probeAdbTables: true, executeCommand: async () => JSON.stringify({ data: [] }), profileReader: async () => ({ tenancy }), adbTableReader: async () => { throw new Error("We trust you have received the usual lecture. sudo: a terminal is required to read the password; sudo: a password is required"); } });
+  assert.match(result.discoveryErrors.adbTables, /^Runner incompatible:/);
+  assert.doesNotMatch(result.discoveryErrors.adbTables, /usual lecture|terminal is required/i);
+});

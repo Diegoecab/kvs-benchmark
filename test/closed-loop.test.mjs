@@ -16,7 +16,7 @@ test("fixed closed-loop execution keeps the configured worker concurrency and ac
   };
   let active = 0, peak = 0;
   const provider = { read: async () => { active += 1; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 5)); active -= 1; return { attempts: 1, readUnits: 1 }; } };
-  const summary = await runClosedLoop({ config, configSha256: "fixture", provider, target: "mock", table: "mock", output, startAt: new Date(Date.now() + 20).toISOString() });
+  const summary = await runClosedLoop({ config, configSha256: "fixture", provider, target: "mock", table: "mock", output, startAt: new Date(Date.now() + 200).toISOString() });
   const records = fs.readFileSync(path.join(output, "operations.ndjson"), "utf8").trim().split(/\r?\n/).map(JSON.parse);
   assert.ok(summary.attempted > 3); assert.equal(summary.attempted, records.length); assert.equal(summary.accounted, records.length); assert.equal(summary.schedulerDrops, 0);
   assert.equal(summary.concurrency.targetConcurrency, 3); assert.equal(summary.concurrency.observedAtOperationStart.max, 3); assert.equal(peak, 3);
