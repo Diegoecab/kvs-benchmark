@@ -15,6 +15,16 @@ test("dashboard lists only valid benchmark workload configurations", () => {
   assert.ok(configs.length >= 10);
   assert.ok(configs.some(config => config.file === "smoke.json" && config.durationSeconds === 2));
   assert.equal(configs.some(config => config.file === "report-suite.example.json"), false);
+  assert.equal(configs.filter(config => config.file.startsWith("dallas-1000-")).length, 4);
+});
+
+test("dashboard previews the complete Dallas matrix with three repetitions", () => {
+  const configs = ["dallas-1000-strong-read.json", "dallas-1000-mixed-70-30.json", "dallas-1000-mixed-50-50.json", "dallas-1000-write.json"];
+  const preview = previewMatrix({ configs, targets, repetitions: 3, infrastructure: { mode: "existing" } }, { configDirectory });
+  assert.equal(preview.rows.length, 12);
+  assert.equal(preview.rows.every(row => row.durationSeconds === 1080), true);
+  assert.equal(preview.totals.totalScheduledOperations, 14823000);
+  assert.equal(preview.totals.totalDatabaseMinutes, 648);
 });
 
 test("dashboard preview makes five-minute operation accounting explicit", () => {

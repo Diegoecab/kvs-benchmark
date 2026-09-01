@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "name": "dallas-1000-mixed-70-30",
+  "dataset": { "keyCount": 10000, "payloadBytes": 900, "partitionBuckets": 64, "seed": 20260728, "distribution": "uniform" },
+  "workload": { "readPercent": 70, "writePercent": 30, "writeMode": "idempotent", "consistency": "strong" },
+  "load": {
+    "model": "open-loop",
+    "executionMode": "concurrent",
+    "schedule": [
+      { "seconds": 180, "operationsPerSecond": 200 },
+      { "seconds": 180, "operationsPerSecond": 350 },
+      { "seconds": 180, "operationsPerSecond": 500 },
+      { "seconds": 180, "operationsPerSecond": 600 },
+      { "seconds": 180, "operationsPerSecond": 700 },
+      { "seconds": 180, "operationsPerSecond": 200 }
+    ],
+    "maxInflight": 4096,
+    "telemetryIntervalMs": 100
+  },
+  "client": { "maxConnections": 512, "requestTimeoutMs": 5000, "connectionTimeoutMs": 3000, "maxAttempts": 1 },
+  "capacity": {
+    "awsDynamodb": { "readCapacityUnits": 500, "writeCapacityUnits": 500 },
+    "adbDynamodbApi": { "readCapacityUnits": 500, "writeCapacityUnits": 500, "mappedTableEcpu": 11 },
+    "ociNosql": { "readUnits": 1000, "writeUnits": 1000, "storageGb": 10 }
+  },
+  "capacityCoverage": {
+    "peakOperationsPerSecond": 700,
+    "peakReadsPerSecond": 490,
+    "peakWritesPerSecond": 210,
+    "awsAndAdbRequired": { "read": 490, "write": 210 },
+    "ociNosqlRequired": { "read": 980, "write": 420 },
+    "plannedHeadroomPercent": 0
+  }
+}

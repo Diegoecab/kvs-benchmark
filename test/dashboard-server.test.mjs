@@ -10,7 +10,7 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   const cloudRuns = { start: options => { assert.equal(options.writeAuthorization, true); activeCloud = cloud; return cloud; }, get: id => { assert.equal(id, cloud.id); return cloud; }, active: () => activeCloud, latest: () => cloud };
   const runnerDiscovery = async options => { assert.equal(options.awsProfile, "dynamodb_poc"); return { aws: [], oci: [], artifactBuckets: [] }; };
   const destinationDiscovery = async options => { assert.deepEqual(options, {}); return { awsTables: ["table"], compartments: [] }; };
-  const { server, token } = createDashboardServer({ profileDiscovery: async () => ({ aws: ["dynamodb_poc"], oci: ["PITWALL_API"], warnings: [], sources: {} }), runnerDiscovery, destinationDiscovery, localSmokeRuns, cloudRuns });
+  const { server, token } = createDashboardServer({ profileDiscovery: async () => ({ aws: ["dynamodb_poc"], oci: ["PITWALL_API"], warnings: [], sources: {} }), runnerDiscovery, destinationDiscovery, localSmokeRuns, cloudRuns, defaultOciRegion: "us-dallas-1" });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   t.after(() => new Promise(resolve => server.close(resolve)));
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -20,6 +20,7 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   assert.equal(bootstrap.capabilities.cloudExecution, true);
   assert.equal(bootstrap.capabilities.ociRunCommand, true);
   assert.equal(bootstrap.capabilities.providerNativeEvidence, true);
+  assert.equal(bootstrap.defaults.ociRegion, "us-dallas-1");
   const denied = await fetch(`${origin}/api/preview`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   assert.equal(denied.status, 403);
   const invalid = await fetch(`${origin}/api/preview`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: "{}" });

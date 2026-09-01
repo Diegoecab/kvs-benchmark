@@ -111,6 +111,8 @@ Phase 1 additionally requires permission to alter the provisioned limits of that
 
 The ADB runner needs the same Run Command and evidence-bucket policies. DynamoDB-API credentials and endpoint remain on the runner in its protected runtime configuration; they are never returned to the dashboard. The credentials must permit `ListTables`, `DescribeTable`, `GetItem`, and the idempotent write operation used by preload/mixed workloads. Phase 1 also needs `UpdateTable` on the dedicated table.
 
+The stable protected runtime path is `/opt/kvs-dashboard/adb-api.runtime.json`. It is created only during the separately approved ADB secret bootstrap, owned by `root`, readable through the runner's restricted passwordless `jq` command, and must never be embedded in cloud-init, Terraform state, dashboard input, or evidence.
+
 ## AWS runner
 
 The EC2 instance must be an online Systems Manager managed node. Its instance role needs:

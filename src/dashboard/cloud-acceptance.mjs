@@ -76,7 +76,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
   const bucket = target === "adb" ? spec.adbBucket : spec.ndcsBucket;
   const region = target === "adb" ? spec.adbOciRegion : spec.ndcsOciRegion;
   const env = target === "adb"
-    ? `runtime=/opt/meli-kvs-benchmark/run-20260826-02/adb-api.runtime.json\nexport AWS_ACCESS_KEY_ID="$(sudo jq -r .accessKeyId \"$runtime\")"\nexport AWS_SECRET_ACCESS_KEY="$(sudo jq -r .secretAccessKey \"$runtime\")"\nexport DDB_ENDPOINT="$(sudo jq -r .endpoint \"$runtime\")"\nenvargs=(-e AWS_REGION=${spec.adbOciRegion} -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT)`
+    ? `runtime=/opt/kvs-dashboard/adb-api.runtime.json\nexport AWS_ACCESS_KEY_ID="$(sudo jq -r .accessKeyId \"$runtime\")"\nexport AWS_SECRET_ACCESS_KEY="$(sudo jq -r .secretAccessKey \"$runtime\")"\nexport DDB_ENDPOINT="$(sudo jq -r .endpoint \"$runtime\")"\nenvargs=(-e AWS_REGION=${spec.adbOciRegion} -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT)`
     : `envargs=(-e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION=${spec.ndcsOciRegion} -e OCI_COMPARTMENT_ID=${spec.ndcsCompartment})`;
   if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nif ! sudo -n podman --version >/dev/null 2>&1; then echo "Runner prerequisite failed: the ocarun user requires passwordless access to Podman for the benchmark commands. Apply the documented sudoers policy or replace this runner." >&2; exit 20; fi\nsudo -n podman image exists ${shellQuote(spec.image)}\n`;
   const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : `${action} --rate=20 --max-inflight=16`;

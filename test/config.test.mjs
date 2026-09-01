@@ -81,6 +81,25 @@ test("capacity-covered 50/50 profile normalizes strong reads and writes with equ
   assert.equal(config.capacityCoverage.ociNosqlRequired.write / config.capacity.ociNosql.writeUnits, 0.75);
 });
 
+test("Dallas profiles reach but never exceed the 1,000 RU/WU NoSQL ceiling", () => {
+  const cases = [
+    ["dallas-1000-strong-read.json", 500, { read: 1000, write: 0 }, 306000],
+    ["dallas-1000-mixed-70-30.json", 700, { read: 980, write: 420 }, 459000],
+    ["dallas-1000-mixed-50-50.json", 1000, { read: 1000, write: 1000 }, 576000],
+    ["dallas-1000-write.json", 500, { read: 0, write: 1000 }, 306000],
+  ];
+  for (const [file, peak, required, operations] of cases) {
+    const config = readConfig(new URL(`../configs/${file}`, import.meta.url)).config;
+    assert.equal(config.load.schedule.reduce((sum, step) => sum + step.seconds, 0), 1080);
+    assert.equal(Math.max(...config.load.schedule.map(step => step.operationsPerSecond)), peak);
+    assert.deepEqual(config.capacityCoverage.ociNosqlRequired, required);
+    assert.ok(required.read <= config.capacity.ociNosql.readUnits);
+    assert.ok(required.write <= config.capacity.ociNosql.writeUnits);
+    assert.deepEqual(config.load.schedule.at(-1), { seconds: 180, operationsPerSecond: 200 });
+    assert.equal(scheduledOperationCount(config), operations);
+  }
+});
+
 test("canonical dataset hash is deterministic and content-sensitive", () => {
   const config = readConfig(new URL("../configs/smoke.json", import.meta.url)).config;
   assert.equal(expectedDatasetSha256(config), expectedDatasetSha256(config));

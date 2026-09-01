@@ -33,7 +33,7 @@ function safeAsset(urlPath) {
   return file.startsWith(publicDirectory + path.sep) ? file : null;
 }
 
-export function createDashboardServer({ token = crypto.randomBytes(24).toString("base64url"), profileDiscovery = discoverProfiles, runnerDiscovery = discoverRegionalRunners, destinationDiscovery = discoverDestinations, localSmokeRuns = new LocalSmokeRuns(), cloudRuns = new CloudAcceptanceRuns() } = {}) {
+export function createDashboardServer({ token = crypto.randomBytes(24).toString("base64url"), profileDiscovery = discoverProfiles, runnerDiscovery = discoverRegionalRunners, destinationDiscovery = discoverDestinations, localSmokeRuns = new LocalSmokeRuns(), cloudRuns = new CloudAcceptanceRuns(), defaultOciRegion = process.env.KVS_DEFAULT_OCI_REGION || "us-ashburn-1" } = {}) {
   const findRun = id => { try { return localSmokeRuns.get(id); } catch { return cloudRuns.get(id); } };
   const findDownload = id => { try { return localSmokeRuns.download(id); } catch { return cloudRuns.download(id); } };
   const server = http.createServer(async (request, response) => {
@@ -41,7 +41,7 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
       const url = new URL(request.url, "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/api/bootstrap") {
         const profiles = await profileDiscovery();
-        return json(response, 200, { schemaVersion: 1, csrfToken: token, profiles, configs: listBenchmarkConfigs(configDirectory), capabilities: { existingInfrastructure: true, managedInfrastructure: false, cloudExecution: true, destinationLookup: true, ociRunCommand: true, providerNativeEvidence: true, localMockExecution: true, liveProgress: true, liveCharts: true }, defaults: { awsRegion: "us-east-1", ociRegion: "us-ashburn-1", imageDigest: defaultImage } });
+        return json(response, 200, { schemaVersion: 1, csrfToken: token, profiles, configs: listBenchmarkConfigs(configDirectory), capabilities: { existingInfrastructure: true, managedInfrastructure: false, cloudExecution: true, destinationLookup: true, ociRunCommand: true, providerNativeEvidence: true, localMockExecution: true, liveProgress: true, liveCharts: true }, defaults: { awsRegion: "us-east-1", ociRegion: defaultOciRegion, imageDigest: defaultImage } });
       }
       if (request.method === "POST" && url.pathname === "/api/preview") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
