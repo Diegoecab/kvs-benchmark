@@ -27,7 +27,7 @@ export async function executeOciRunCommand({ executeCommand, profile, region, co
     const execution = JSON.parse(raw).data || {}, status = execution["lifecycle-state"]; lastStatus = status || lastStatus;
     if (["SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELED"].includes(status)) {
       const content = execution.content || {}, stdout = content.text || "", exitCode = content["exit-code"] ?? content.exitCode ?? 0;
-      if (status !== "SUCCEEDED" || exitCode !== 0) throw new Error(`OCI Run Command ${displayName}: ${content.message || stdout || status}`);
+      if (status !== "SUCCEEDED" || exitCode !== 0) throw new Error(`OCI Run Command ${displayName}: ${stdout || content.message || status}`);
       return { commandId, stdout, status, exitCode };
     }
     if (status && status !== "ACCEPTED" && !executionDeadline) executionDeadline = Date.now() + timeoutSeconds * 1000;

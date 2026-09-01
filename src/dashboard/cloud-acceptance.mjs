@@ -68,7 +68,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
   const env = target === "adb"
     ? `runtime=/opt/meli-kvs-benchmark/run-20260826-02/adb-api.runtime.json\nexport AWS_ACCESS_KEY_ID="$(sudo jq -r .accessKeyId \"$runtime\")"\nexport AWS_SECRET_ACCESS_KEY="$(sudo jq -r .secretAccessKey \"$runtime\")"\nexport DDB_ENDPOINT="$(sudo jq -r .endpoint \"$runtime\")"\nenvargs=(-e AWS_REGION=us-ashburn-1 -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e DDB_ENDPOINT)`
     : `envargs=(-e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION=${spec.ndcsOciRegion} -e OCI_COMPARTMENT_ID=${spec.ndcsCompartment})`;
-  if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nsudo podman image exists ${shellQuote(spec.image)}\n`;
+  if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nif ! sudo -n true 2>/dev/null; then echo "Runner prerequisite failed: the ocarun user requires passwordless sudo for the benchmark commands. Apply the documented sudoers policy or replace this runner." >&2; exit 20; fi\nsudo -n podman image exists ${shellQuote(spec.image)}\n`;
   const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : `${action} --rate=20 --max-inflight=16`;
   const outputArgument = action === "doctor" ? "results/doctor.json" : "results";
   const invocation = `sudo podman run --rm --network host "${'${envargs[@]}'}" -v "$root:/app/results:Z" "$image" ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session)} --target=${target} --table=${shellQuote(table)} --output=${outputArgument}`;

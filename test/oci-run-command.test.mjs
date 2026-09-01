@@ -38,3 +38,9 @@ test("OCI Run Command recovers the command id after a create response timeout", 
   const result = await executeOciRunCommand({ executeCommand, profile: "TEST", region: "us-ashburn-1", compartmentId: "ocid1.compartment.test", instanceId: "ocid1.instance.test", script: "date -u\n", displayName: "recover-me", controlDirectory: root, timeoutSeconds: 1, pollIntervalMs: 1 });
   assert.equal(result.commandId, "ocid1.instanceagentcommand.test"); assert.equal(result.stdout, "ready");
 });
+
+test("OCI Run Command reports runner stdout before the generic execution wrapper", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-run-command-error-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const executeCommand = async (_file, args) => args.includes("create") ? "ocid1.instanceagentcommand.test\n" : JSON.stringify({ data: { "lifecycle-state": "FAILED", content: { text: "sudo: a password is required", message: "exit status 1", "exit-code": 1 } } });
+  await assert.rejects(() => executeOciRunCommand({ executeCommand, profile: "TEST", region: "us-ashburn-1", compartmentId: "ocid1.compartment.test", instanceId: "ocid1.instance.test", script: "date -u\n", displayName: "test-error", controlDirectory: root, pollIntervalMs: 1 }), /sudo: a password is required/);
+});

@@ -34,11 +34,11 @@ function renderConfigs(configs) {
     const preset = document.createElement("td"), title = document.createElement("b"); title.textContent = config.name; preset.append(title); if (selectedByDefault) { const badge = document.createElement("small"); badge.className = "preset-badge"; badge.textContent = "Recommended"; preset.append(badge); }
     const repetitionCell = document.createElement("td"), repetitions = document.createElement("input"); repetitions.type = "number"; repetitions.min = "1"; repetitions.step = "1"; repetitions.value = "1"; repetitions.className = "preset-repetitions"; repetitions.dataset.config = config.file; repetitions.setAttribute("aria-label", `Repetitions for ${config.name}`); repetitionCell.append(repetitions);
     const modelCell = document.createElement("td"); modelCell.textContent = config.model === "open-loop" ? "Open-loop" : "Fixed workers";
-    const mixCell = document.createElement("td"), mix = document.createElement("input"), mixValue = document.createElement("output"); mix.type = "range"; mix.min = "0"; mix.max = "100"; mix.step = "1"; mix.value = String(config.readPercent); mix.className = "preset-read-percent"; mix.setAttribute("aria-label", `Read percentage for ${config.name}`); mixValue.className = "mix-value"; const updateMix = () => { mixValue.textContent = `${mix.value}% R / ${100 - Number(mix.value)}% W`; }; updateMix(); mix.addEventListener("input", updateMix); mixCell.append(mix, mixValue);
+    const mixCell = document.createElement("td"), mixControl = document.createElement("div"), mix = document.createElement("input"), mixValue = document.createElement("output"), mixEnds = document.createElement("div"); mixCell.className = "mix-cell"; mixControl.className = "mix-control"; mix.type = "range"; mix.min = "0"; mix.max = "100"; mix.step = "1"; mix.value = String(config.readPercent); mix.className = "preset-read-percent"; mix.setAttribute("aria-label", `Read percentage for ${config.name}`); mixValue.className = "mix-value"; mixEnds.className = "mix-ends"; mixEnds.innerHTML = "<span>Writes</span><span>Reads</span>"; const updateMix = () => { const reads = Number(mix.value); mixValue.textContent = `${reads}% reads · ${100 - reads}% writes`; mix.style.setProperty("--read-percent", `${reads}%`); }; updateMix(); mix.addEventListener("input", updateMix); mixControl.append(mixValue, mix, mixEnds); mixCell.append(mixControl);
     const consistencyCell = document.createElement("td"), consistency = document.createElement("select"); consistency.className = "preset-consistency"; consistency.append(new Option("Strong", "strong"), new Option("Eventual", "eventual")); consistency.value = config.consistency; consistencyCell.append(consistency);
     const durationCell = document.createElement("td"), duration = document.createElement("input"); duration.type = "number"; duration.min = "1"; duration.step = "1"; duration.value = String(config.durationSeconds); duration.className = "preset-duration"; duration.setAttribute("aria-label", `Duration seconds for ${config.name}`); durationCell.append(duration);
-    const loadCell = document.createElement("td"), load = document.createElement("input"); load.type = "number"; load.min = "0.001"; load.step = "0.1"; load.value = String(config.rateMultiplier || 1); load.className = "preset-load"; load.disabled = config.model !== "open-loop"; load.title = load.disabled ? "Fixed-worker workloads use concurrency" : `${config.loadSummary}; multiplier applied to every offered-load step`; load.setAttribute("aria-label", `Load multiplier for ${config.name}`); loadCell.append(load);
-    const concurrencyCell = document.createElement("td"), concurrency = document.createElement("input"); concurrency.type = "number"; concurrency.min = "1"; concurrency.step = "1"; concurrency.value = config.fixedConcurrency == null ? "" : String(config.fixedConcurrency); concurrency.placeholder = "—"; concurrency.className = "preset-concurrency"; concurrency.disabled = config.model !== "closed-loop"; concurrency.title = concurrency.disabled ? "Open-loop workloads use offered load" : "Constant worker count"; concurrency.setAttribute("aria-label", `Fixed concurrency for ${config.name}`); concurrencyCell.append(concurrency);
+    const loadCell = document.createElement("td"), load = document.createElement("input"); loadCell.className = "load-cell"; load.type = "number"; load.min = "0.001"; load.step = "0.1"; load.value = String(config.rateMultiplier || 1); load.className = "preset-load"; load.title = `${config.loadSummary}; multiplier applied to every offered-load step`; load.setAttribute("aria-label", `Load multiplier for ${config.name}`); if (config.model === "open-loop") loadCell.append(load); else loadCell.innerHTML = '<span class="not-applicable">N/A · closed-loop</span>';
+    const concurrencyCell = document.createElement("td"), concurrency = document.createElement("input"); concurrencyCell.className = "concurrency-cell"; concurrency.type = "number"; concurrency.min = "1"; concurrency.step = "1"; concurrency.value = config.fixedConcurrency == null ? "1" : String(config.fixedConcurrency); concurrency.className = "preset-concurrency"; concurrency.title = config.loadSummary || "Constant worker count"; concurrency.setAttribute("aria-label", `Fixed concurrency for ${config.name}`); if (config.model === "closed-loop") concurrencyCell.append(concurrency); else concurrencyCell.innerHTML = '<span class="not-applicable">N/A · open-loop</span>';
     row.append(choice, preset, repetitionCell, modelCell, mixCell, consistencyCell, durationCell, loadCell, concurrencyCell);
     input.addEventListener("change", updatePresetCount); return row;
   }));
@@ -70,6 +70,11 @@ function runMode() { return document.querySelector('input[name="run-mode"]:check
 const activeTarget = () => value("destination-product");
 const targetDiscoveryEnabled = name => selectedTargets.has(name) || activeTarget() === name;
 const cloudEnabled = name => name === "aws" ? targetDiscoveryEnabled("aws") : targetDiscoveryEnabled("adb") || targetDiscoveryEnabled("ndcs");
+function setDiscoveryBusy(busy) {
+  const button = $("discover-destinations");
+  button.disabled = busy; button.classList.toggle("is-loading", busy); button.setAttribute("aria-busy", String(busy));
+  button.textContent = busy ? "Refreshing resources..." : "Refresh available resources";
+}
 function syncCloudCatalog() {
   const target = activeTarget();
   for (const name of ["aws", "adb", "ndcs"]) document.querySelector(`article.provider.${name}`).hidden = name !== target;
@@ -136,7 +141,7 @@ function runnerOptions(select, values, preferredPattern) {
 }
 
 async function discoverRunners({ manageButton = true } = {}) {
-  if (manageButton) $("discover-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Step 1/2: checking cloud identities, runners, remote-control health, placement, and evidence buckets...";
+  if (manageButton) setDiscoveryBusy(true); $("runner-status").className = "callout"; $("runner-status").textContent = "Step 1/2: checking cloud identities, runners, remote-control health, placement, and evidence buckets...";
   try {
     if (!cloudEnabled("aws") && !cloudEnabled("oci")) throw new Error("Select at least one cloud provider");
     const fetchInventory = async (ociProfile, ociRegion, clouds) => { const response = await fetch("/api/discover-runners", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify({ awsProfile: value("aws-profile"), awsRegion: value("aws-region"), ociProfile, ociRegion, clouds }) }); const result = await response.json(); if (!response.ok) throw new Error(result?.error || `Discovery failed (${response.status})`); return result; };
@@ -149,7 +154,7 @@ async function discoverRunners({ manageButton = true } = {}) {
     $("artifact-bucket").replaceChildren(new Option("Select an evidence bucket", ""), ...(discovered.artifactBuckets || []).map(name => new Option(name, name))); if (discovered.artifactBuckets?.length === 1) $("artifact-bucket").value = discovered.artifactBuckets[0];
     $("runner-status").className = "callout"; $("runner-status").innerHTML = `<b>Discovery complete.</b> ${discovered.aws.length} AWS, ${discovered.adbOci.length} ADB-profile OCI, and ${discovered.ndcsOci.length} NoSQL-profile OCI runner(s); ${discovered.artifactBuckets.length} evidence bucket(s).`; return true;
   } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error?.message || String(error); return false; }
-  finally { if (manageButton) $("discover-destinations").disabled = false; }
+  finally { if (manageButton) setDiscoveryBusy(false); }
 }
 
 function lookupOptions(select, items, { label = item => item?.name || item, getValue = item => item?.id || item, placeholder = "Select a discovered value", manual = false, preferred } = {}) {
@@ -197,7 +202,7 @@ function renderDestinationDetails() {
 }
 
 async function lookupDestinations({ manageButton = true, probeAdbTables = true } = {}) {
-  if (manageButton) $("discover-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Step 2/2: reading accessible compartments, databases, tables, and evidence stores without modifying them...";
+  if (manageButton) setDiscoveryBusy(true); $("runner-status").className = "callout"; $("runner-status").textContent = "Step 2/2: reading accessible compartments, databases, tables, and evidence stores without modifying them...";
   let stage = "initialization";
   try {
     if (!bootstrap?.csrfToken) throw new Error("Dashboard session is not ready; reload the page");
@@ -247,15 +252,15 @@ async function lookupDestinations({ manageButton = true, probeAdbTables = true }
     const manualNote = request.targets.adb && !adbRunner.id ? " Select an ADB runner and refresh again to load live DynamoDB-API tables." : "";
     $("runner-status").className = `callout${mismatch || partialErrors.length ? " warning" : ""}`; $("runner-status").innerHTML = `<b>${partialErrors.length ? "Partial lookup complete." : "Lookup complete."}</b> ${countParts.join(", ")}.${manualNote}${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}${errorList}`;
   } catch (error) { console.error("Destination lookup failed", { stage, error }); $("runner-status").className = "callout error"; $("runner-status").textContent = `Destination lookup failed during ${stage}: ${error?.message || String(error)}`; }
-  finally { if (manageButton) $("discover-destinations").disabled = false; }
+  finally { if (manageButton) setDiscoveryBusy(false); }
 }
 
 async function discoverDestinations({ automatic = false } = {}) {
-  $("discover-destinations").disabled = true;
+  setDiscoveryBusy(true);
   try {
     const ready = await discoverRunners({ manageButton: false });
     if (ready) await lookupDestinations({ manageButton: false, probeAdbTables: !automatic });
-  } finally { $("discover-destinations").disabled = false; }
+  } finally { setDiscoveryBusy(false); }
 }
 
 function autoDiscoverActiveTarget() {
@@ -317,6 +322,11 @@ function renderLiveCharts() {
   drawChart($("throughput-chart"), [...targets.map(name => ({ name, values: liveChartSamples.map(sample => sample[name]?.operationsPerSecond) })), { name: "offered", values: liveChartSamples.map(sample => sample.offered) }], "Waiting for throughput samples...");
   drawChart($("latency-chart"), targets.map(name => ({ name, values: liveChartSamples.map(sample => sample[name]?.rollingP95Ms) })), "Waiting for latency samples...");
 }
+function syncLiveChartVisibility() {
+  const live = runMode() === "live";
+  $("live-chart-panel").classList.toggle("hidden", !live);
+  if (live) { $("live-chart-caption").textContent = liveChartSamples.length ? $("live-chart-caption").textContent : "Waiting for the workload stage and the first runner sample."; renderLiveCharts(); }
+}
 function captureLiveSample(run) {
   const sessionId = run.currentSession?.id; if (!sessionId) return;
   if (liveChartSession !== sessionId) { liveChartSession = sessionId; liveChartSamples = []; }
@@ -335,7 +345,7 @@ function showSmoke(run) {
   $("smoke-status").className = `callout${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
   $("pipeline").innerHTML = (run.stages || []).map(stage => `<div class="pipeline-stage ${escapeHtml(stage.status)}"><span>${escapeHtml(stage.status)}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b><small>${escapeHtml(stage.detail || "Waiting")}</small></div>`).join("");
   const targetMetrics = run.targetMetrics || {};
-  const showLiveChart = cloud && run.mode === "live" && ["running", "complete"].includes(run.status); $("live-chart-panel").classList.toggle("hidden", !showLiveChart); if (showLiveChart) captureLiveSample(run);
+  const showLiveChart = cloud && run.mode === "live"; $("live-chart-panel").classList.toggle("hidden", !showLiveChart); if (showLiveChart) { captureLiveSample(run); if (!session) $("live-chart-caption").textContent = `Waiting for workload · current run status: ${run.status}`; renderLiveCharts(); }
   if (cloud && Object.keys(targetMetrics).length) $("live-stats").innerHTML = Object.entries(targetMetrics).map(([target, metric]) => `<div class="target-live provider-${escapeHtml(target)}"><h4>${escapeHtml(target.toUpperCase())}${metric.provisional ? " · LIVE PREVIEW" : " · FINAL"}</h4><div class="stats"><div class="stat"><span>Completed</span><b>${number(metric.completed)}</b></div><div class="stat"><span>Failed</span><b>${number(metric.failed)}</b></div><div class="stat"><span>Ops/s</span><b>${number(metric.operationsPerSecond)}</b></div><div class="stat"><span>In flight</span><b>${number(metric.inFlight)}</b></div><div class="stat"><span>Latest latency ms</span><b>${number(metric.latestLatencyMs)}</b></div><div class="stat"><span>${metric.provisional ? "Rolling P95 ms" : "Final P95 ms"}</span><b>${number(metric.rollingP95Ms ?? metric.p95)}</b></div><div class="stat"><span>Final P99 ms</span><b>${number(metric.p99)}</b></div><div class="stat"><span>Final max ms</span><b>${number(metric.max)}</b></div></div></div>`).join("");
   else { const cloudCompleted = run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.completed, 0) : null; const values = [["Completed", cloudCompleted ?? progress.completed ?? 0], ["Failed", progress.failed ?? (run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.failed, 0) : 0)], ["Current ops/s", progress.achievedOperationsPerSecond ?? run.summary?.achievedOperationsPerSecond], ["In flight", progress.inFlight ?? 0], ["Latest latency ms", progress.latestLatencyMs], ["Final P95 ms", latency.p95]]; $("live-stats").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join(""); }
   $("smoke-detail").textContent = JSON.stringify({ kind: run.kind, mode: run.mode, status: run.status, startedAt: run.startedAt, completedAt: run.completedAt, targetStatus: run.targetStatus, certificates: run.certificates, summaries: run.summaries, evidence: run.output, latestOperation: progress.latestOperation, latestError: progress.latestError }, null, 2);
@@ -371,6 +381,7 @@ for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEven
 $("adb-table-manual").addEventListener("input", () => localStorage.setItem("kvs-dashboard-adb-table", value("adb-table-manual")));
 document.querySelectorAll(".option-search").forEach(input => input.addEventListener("input", () => filterOptions(input)));
 document.querySelectorAll('#live-series-controls input').forEach(input => input.addEventListener("change", renderLiveCharts));
+document.querySelectorAll('input[name="run-mode"]').forEach(input => input.addEventListener("change", syncLiveChartVisibility));
 for (const id of ["adb-compartment", "ndcs-compartment"]) $(id).addEventListener("change", () => { if (destinations) void lookupDestinations({ probeAdbTables: false }); });
 for (const context of ["adb", "ndcs"]) for (const suffix of ["profile", "region"]) $(`${context}-${suffix}`).addEventListener("change", () => {
   discovered = null; destinations = null;
@@ -383,4 +394,4 @@ $("select-recommended").addEventListener("click", () => selectPresets(recommende
 $("image-digest").addEventListener("input", renderRunnerImage);
 $("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-destinations").addEventListener("click", discoverDestinations);
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
-syncDestinationProducts(); renderDestinationSummary(); showStep(1); load().catch(showLoadError);
+syncDestinationProducts(); renderDestinationSummary(); syncLiveChartVisibility(); showStep(1); load().catch(showLoadError);

@@ -20,6 +20,8 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /Load multiplier/);
   assert.match(html, /<th scope="col">Concurrency<\/th>/);
   assert.match(app, /mix\.type = "range"/);
+  assert.match(app, /Writes<\/span><span>Reads/);
+  assert.match(app, /% reads · \$\{100 - reads\}% writes/);
   assert.match(app, /presetOverrides/);
   assert.match(html, /<th scope="col">Repetitions<\/th>/);
   assert.doesNotMatch(html, /id="repetitions"/);
@@ -33,6 +35,8 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /id="cloud-aws"/); assert.match(html, /id="cloud-oci"/);
   assert.match(html, /No SSH, SCP, private key, or public IP is used/);
   assert.match(html, /Provisional performance timeline/); assert.match(app, /function renderLiveCharts/);
+  assert.match(app, /function syncLiveChartVisibility/);
+  assert.match(app, /Waiting for the workload stage and the first runner sample/);
   assert.match(html, /canonical dataset preload and certification/);
   assert.match(app, /function renderRunnerImage/);
   assert.match(html, /theme\.css/); assert.match(theme, /--bg-header: #1a1a2e/); assert.match(theme, /--accent-teal: #0e7a6e/);
@@ -65,6 +69,9 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(app, /syncOverrideApplicability/);
   assert.match(app, /Runner discovery did not complete/);
   assert.match(app, /async function discoverDestinations/);
+  assert.match(app, /function setDiscoveryBusy/);
+  assert.match(app, /Refreshing resources\.\.\./);
+  assert.match(app, /setAttribute\("aria-busy", String\(busy\)\)/);
   assert.match(app, /Destination lookup failed during \$\{stage\}/);
   assert.match(app, /Array\.isArray\(adbResult\?\.oci\)/);
   assert.match(app, /Array\.isArray\(ndcsResult\?\.oci\)/);
@@ -99,6 +106,8 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(app, /load\(\)\.catch\(showLoadError\)/);
   assert.match(app, /Synchronized workload sessions/);
   assert.match(theme, /\.resource-detail/);
+  assert.match(theme, /\.secondary\.is-loading::before/);
+  assert.match(theme, /@keyframes discovery-spin/);
 });
 
 test("destination option defaults do not collide with Object prototype methods", () => {

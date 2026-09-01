@@ -92,8 +92,10 @@ export function applyRuntimeOverrides(loaded, overrides = {}) {
     if (overrides.executionMode === "sequential") config.load.maxInflight = 1;
   }
   if (overrides.fixedConcurrency != null) {
-    if (config.load.model !== "closed-loop" || config.load.fixedConcurrency == null) throw new Error("fixedConcurrency requires a fixed closed-loop profile");
+    if (config.load.model !== "closed-loop") throw new Error("fixedConcurrency requires a closed-loop profile");
     config.load.fixedConcurrency = number(overrides.fixedConcurrency, "fixedConcurrency");
+    delete config.load.concurrencyLevels; delete config.load.warmupSecondsPerLevel; delete config.load.measurementSecondsPerLevel;
+    config.load.telemetryIntervalMs ||= 100;
   }
   validateConfig(config);
   const effective = `${JSON.stringify(config)}\n`;

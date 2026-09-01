@@ -57,6 +57,12 @@ test("runtime overrides are validated, applied, and included in a new effective 
   assert.throws(() => applyRuntimeOverrides(loaded, { consistency: "unknown" }), /unsupported consistency/);
 });
 
+test("a concurrency sweep can be pinned to one editable fixed-worker value", () => {
+  const loaded = applyRuntimeOverrides(readConfig(new URL("../configs/concurrency-sweep.json", import.meta.url)), { durationSeconds: 120, fixedConcurrency: 16 });
+  assert.equal(loaded.config.load.fixedConcurrency, 16); assert.equal(loaded.config.load.durationSeconds, 120); assert.equal(loaded.config.load.telemetryIntervalMs, 100);
+  assert.equal("concurrencyLevels" in loaded.config.load, false);
+});
+
 test("workloads with writes require an explicit write mode", () => {
   const config = structuredClone(readConfig(new URL("../configs/smoke.json", import.meta.url)).config); config.workload = { readPercent: 70, writePercent: 30, consistency: "strong" };
   assert.throws(() => validateConfig(config), /writeMode/); config.workload.writeMode = "idempotent"; assert.doesNotThrow(() => validateConfig(config));
