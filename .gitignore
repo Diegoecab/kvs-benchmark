@@ -6,6 +6,7 @@ benchmark-package/
 .env
 .env.*
 .secrets/
+.run-command-control/
 *.pem
 *.key
 *.p12
