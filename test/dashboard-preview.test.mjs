@@ -59,3 +59,19 @@ test("dashboard applies model-specific overrides only to compatible profiles", (
   assert.equal(closed.fixedConcurrency, 7);
   assert.equal(preview.warnings.length, 2);
 });
+
+test("dashboard applies independent editable values to each selected preset", () => {
+  const preview = previewMatrix({
+    configs: ["x4-mixed-70-30-open-loop.json", "x4-read-fixed-concurrency.json"],
+    targets,
+    infrastructure: { mode: "existing" },
+    presetOverrides: {
+      "x4-mixed-70-30-open-loop.json": { readPercent: 60, writePercent: 40, writeMode: "idempotent", consistency: "eventual", durationSeconds: 120, rateMultiplier: 0.5 },
+      "x4-read-fixed-concurrency.json": { readPercent: 80, writePercent: 20, writeMode: "idempotent", consistency: "strong", durationSeconds: 90, fixedConcurrency: 12 }
+    }
+  }, { configDirectory });
+  const open = preview.rows.find(row => row.loadModel === "open-loop"), closed = preview.rows.find(row => row.loadModel === "closed-loop");
+  assert.equal(open.readPercent, 60); assert.equal(open.writePercent, 40); assert.equal(open.consistency, "eventual"); assert.equal(open.durationSeconds, 120); assert.equal(open.averageScheduledOperationsPerSecond, 160);
+  assert.equal(closed.readPercent, 80); assert.equal(closed.writePercent, 20); assert.equal(closed.durationSeconds, 90); assert.equal(closed.fixedConcurrency, 12);
+  assert.equal(open.effectiveOverrides.writeMode, "idempotent"); assert.equal(closed.effectiveOverrides.fixedConcurrency, 12);
+});

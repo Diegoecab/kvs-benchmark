@@ -11,11 +11,16 @@ const theme = fs.readFileSync(path.join(root, "src", "dashboard", "public", "the
 
 test("dashboard exposes a five-step wizard with contextual workload help", () => {
   assert.equal((html.match(/class="wizard-panel"/g) || []).length, 5);
-  assert.ok((html.match(/class="info"/g) || []).length >= 7);
+  assert.ok((html.match(/class="info"/g) || []).length >= 3);
   assert.match(html, /Review and run/);
   assert.match(app, /showStep\(currentStep \+ 1\)/);
   assert.match(html, /class="table-wrap preset-table"/);
-  assert.match(html, /Custom runtime overrides/);
+  assert.doesNotMatch(html, /Custom runtime overrides/);
+  assert.match(html, /Read \/ write mix/);
+  assert.match(html, /Load multiplier/);
+  assert.match(html, /<th scope="col">Concurrency<\/th>/);
+  assert.match(app, /mix\.type = "range"/);
+  assert.match(app, /presetOverrides/);
   assert.match(html, /<th scope="col">Repetitions<\/th>/);
   assert.doesNotMatch(html, /id="repetitions"/);
   assert.match(app, /presetRepetitions/);
@@ -28,6 +33,8 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /id="cloud-aws"/); assert.match(html, /id="cloud-oci"/);
   assert.match(html, /No SSH, SCP, private key, or public IP is used/);
   assert.match(html, /Provisional performance timeline/); assert.match(app, /function renderLiveCharts/);
+  assert.match(html, /canonical dataset preload and certification/);
+  assert.match(app, /function renderRunnerImage/);
   assert.match(html, /theme\.css/); assert.match(theme, /--bg-header: #1a1a2e/); assert.match(theme, /--accent-teal: #0e7a6e/);
 });
 
@@ -42,11 +49,15 @@ test("dashboard defaults to async and exposes live progress and package download
 test("dashboard exposes cloud and local test actions with model-aware overrides", () => {
   assert.match(html, /id="start-benchmark"[^>]*>Run selected cloud benchmark/);
   assert.match(html, /id="start-smoke"[^>]*>Run local functional test/);
-  assert.match(html, /id="discover-destinations"[^>]*>Discover destinations/);
+  assert.match(html, /id="discover-destinations"[^>]*>Refresh available resources/);
   assert.doesNotMatch(html, /id="discover-runners"/);
   assert.doesNotMatch(html, /id="lookup-destinations"/);
   assert.match(html, /id="adb-compartment"/);
-  assert.match(html, /id="adb-live-table-lookup"/);
+  assert.doesNotMatch(html, /Probe ADB API tables/);
+  assert.match(html, /id="destination-cloud"/);
+  assert.match(html, /id="destination-product"/);
+  assert.match(html, /id="add-destination"/);
+  assert.match(html, /id="destination-summary"/);
   assert.match(html, /id="ndcs-compartment"/);
   assert.match(html, /against any enabled targets/i);
   assert.match(html, /id="pipeline"/);
@@ -65,21 +76,27 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(app, /OCI NoSQL table rendering/);
   assert.match(app, /adbOciProfile: value\("adb-profile"\)/);
   assert.match(app, /ndcsOciProfile: value\("ndcs-profile"\)/);
-  assert.match(app, /probeAdbTables: \$\("adb-live-table-lookup"\)\.checked/);
+  assert.match(app, /probeAdbTables: probeAdbTables && targetDiscoveryEnabled\("adb"\) && Boolean\(adbRunner\.id\)/);
   assert.match(app, /kvs-dashboard-adb-table/);
   assert.match(app, /recent local evidence/);
   assert.match(app, /recentEvidenceTables\?\.adb/);
   assert.match(app, /destinations\.adbCompartments/);
   assert.match(app, /destinations\.ndcsCompartments/);
-  assert.match(html, /id="destination-details"/);
+  assert.doesNotMatch(html, /id="destination-details"/);
   assert.match(app, /function renderDestinationDetails/);
+  assert.match(app, /void autoDiscoverActiveTarget\(\)/);
+  assert.match(app, /probeAdbTables: !automatic/);
   assert.match(app, /Live provider metadata/);
-  assert.match(app, /Recent local evidence · not live-verified/);
+  assert.match(app, /Selected destination · not live-verified/);
   assert.match(app, /Autoscaling/);
   for (const label of ["Status", "Capacity mode", "Read capacity", "Write capacity", "Current table size", "Storage limit", "Item count"]) assert.match(app, new RegExp(`\\["${label}"`));
-  assert.match(app, /data-action="verify-adb-metadata"/);
-  assert.match(app, /async function verifyAdbMetadata/);
-  assert.match(app, /read-only ListTables \+ DescribeTable probe/);
+  assert.match(app, /function addDestination/);
+  assert.match(app, /data-remove-destination/);
+  assert.doesNotMatch(html, /id="refresh"/);
+  assert.doesNotMatch(html, /Refresh profiles/i);
+  assert.match(html, /id="connection"[^>]*aria-live="polite"[^>]*>Discovering profiles\.\.\./);
+  assert.match(app, /fetch\("\/api\/bootstrap", \{ cache: "no-store" \}\)/);
+  assert.match(app, /load\(\)\.catch\(showLoadError\)/);
   assert.match(app, /Synchronized workload sessions/);
   assert.match(theme, /\.resource-detail/);
 });

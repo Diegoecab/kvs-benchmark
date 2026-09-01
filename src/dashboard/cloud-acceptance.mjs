@@ -42,6 +42,7 @@ function validate(input) {
   const preview = previewMatrix(input, { configDirectory });
   result.matrix = preview.rows;
   result.overrides = input.overrides || {};
+  result.presetOverrides = input.presetOverrides || {};
   return result;
 }
 
@@ -51,8 +52,8 @@ function visible(state) {
 }
 
 function runtimeArguments(spec, session) {
-  const ignored = new Set(session?.ignoredOverrides || []), values = spec.overrides || {};
-  const names = { durationSeconds: "duration-seconds", fixedConcurrency: "fixed-concurrency", readPercent: "read-percent", writePercent: "write-percent", rateMultiplier: "rate-multiplier", executionMode: "execution-mode", consistency: "consistency" };
+  const ignored = new Set(session?.ignoredOverrides || []), values = session?.effectiveOverrides || spec.overrides || {};
+  const names = { durationSeconds: "duration-seconds", fixedConcurrency: "fixed-concurrency", readPercent: "read-percent", writePercent: "write-percent", writeMode: "write-mode", rateMultiplier: "rate-multiplier", executionMode: "execution-mode", consistency: "consistency" };
   return Object.entries(names).filter(([name]) => values[name] != null && !ignored.has(name)).map(([name, option]) => `--${option}=${shellQuote(values[name])}`).join(" ");
 }
 

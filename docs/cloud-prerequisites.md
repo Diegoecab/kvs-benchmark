@@ -45,6 +45,8 @@ Every runner must:
 
 No public IP, SSH, SCP, private SSH key, or inbound connection from the dashboard is required.
 
+OCI runners must use a private subnet with no ingress rules. Route outbound HTTPS through a NAT Gateway (and OCI Service Gateway where appropriate); do not assign a public IP merely to reach the container registry or cloud APIs.
+
 ## OCI runners: Run Command
 
 Create a dynamic group before creating the runners when possible. A compartment-scoped rule supports current and future dedicated runners:
@@ -63,13 +65,27 @@ Use the tenancy's actual identity-domain name, commonly `Default`. Do not assume
 
 The **Compute Instance Run Command** Oracle Cloud Agent plugin must be `RUNNING`. OCI documents that a newly added dynamic-group membership can take up to 30 minutes to begin polling. Delivery time and script execution time are separate: the dashboard allows up to 300 seconds for an `ACCEPTED` command to be delivered, then applies the action-specific execution timeout. If delivery exceeds 300 seconds, verify this policy, egress TCP/443, the pending-command backlog, and the agent log before running a workload.
 
-Run Command executes Linux scripts as `ocarun`. Because the benchmark uses the root Podman image store and protected runtime files, configure passwordless administrative execution at instance creation. Oracle's documented sudoers entry is:
+Run Command executes Linux scripts as `ocarun`. Because the benchmark uses the root Podman image store and protected runtime files, configure passwordless administrative execution at instance creation. Oracle documents a broad entry:
 
 ```text
 ocarun ALL=(ALL) NOPASSWD:ALL
 ```
 
-Create `/etc/sudoers.d/101-oracle-cloud-agent-run-command` with mode `0440`, validate it with `visudo -cf`, and include this in cloud-init or the runner image. Do not rely on an interactive password or terminal. Rootless Podman is not an equivalent fallback unless the image, subuid/subgid mappings, mounts, network behavior, and runtime-file access are independently certified.
+For this suite, prefer the narrower command allowlist implemented by the infrastructure repository:
+
+```text
+ocarun ALL=(root) NOPASSWD: /usr/bin/podman *, /usr/bin/mkdir *, /usr/bin/chmod *, /usr/bin/chronyc *, /usr/bin/jq *
+```
+
+Create the sudoers file with mode `0440`, validate it with `visudo -cf`, and include it in cloud-init or the runner image. `podman`, `mkdir`, `chmod`, and `chronyc` are used by every OCI benchmark target; protected ADB runtime configuration additionally requires `jq`. Do not rely on an interactive password or terminal. Rootless Podman is not an equivalent fallback unless the image, subuid/subgid mappings, mounts, network behavior, and runtime-file access are independently certified.
+
+Cloud-init must validate the pinned image from the Run Command identity itself before declaring readiness:
+
+```text
+sudo -u ocarun sudo -n /usr/bin/podman image exists <IMAGE_DIGEST>
+```
+
+The infrastructure baseline writes `/var/lib/cloud/instance/kvs-benchmark-ready` only after packages, services, sudoers validation, image preload, and the `ocarun` check succeed. Discovery of a running VM alone is not readiness.
 
 OCI permits at most five Run Command scripts in flight. An accepted or expired diagnostic can occupy the queue until the service expires or cancels it. Do not repeatedly click **Run** while a preflight is pending; inspect/cancel stale benchmark commands before retrying.
 
@@ -121,7 +137,7 @@ The suite validates the table and strongly certifies the canonical dataset befor
 
 1. `npm run check` passes locally.
 2. Dashboard discovery shows the intended profiles, compartments, runners, tables, capacity, and evidence buckets.
-3. AWS runner reports `SSM_ONLINE`; OCI runners report `RUN_COMMAND_RUNNING`.
+3. AWS runner reports `SSM_ONLINE`; OCI runners report `RUN_COMMAND_RUNNING`, contain the readiness marker, and pass the `ocarun` image check.
 4. A two-second `smoke.json` cloud run completes for each target independently.
 5. Dataset certificates match before running a multi-target session.
 6. The final immutable matrix preview shows the expected duration, operations/s, operations/minute, repetitions, consistency, mix, and concurrency model.

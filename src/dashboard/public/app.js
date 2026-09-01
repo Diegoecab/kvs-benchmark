@@ -11,34 +11,44 @@ let discovered = null;
 let destinations = null;
 let liveChartSession = null;
 let liveChartSamples = [];
+const selectedTargets = new Set();
+let automaticDiscovery = null;
+let automaticDiscoveryPending = false;
 
 function selected(select, preferred) { if (!select.options.length) return; ([...select.options].find(option => option.value === preferred) || select.options[0]).selected = true; }
 function profiles(select, values, preferred) { select.size = 1; select.replaceChildren(...values.map(item => new Option(item, item))); selected(select, preferred); }
 const recommendedPreset = file => file.includes("5m") || file.includes("mixed-70-30");
 function presetDuration(seconds) { if (seconds == null) return "Variable"; return seconds % 60 === 0 ? `${seconds / 60} min` : `${seconds} sec`; }
 function updatePresetCount() { const selected = document.querySelectorAll('input[name="config"]:checked').length; $("preset-count").textContent = `${selected} preset${selected === 1 ? "" : "s"} selected`; }
+function renderRunnerImage() {
+  const reference = value("image-digest"), [repository = "", digest = ""] = reference.split("@"), slash = repository.indexOf("/");
+  const registry = slash > 0 ? repository.slice(0, slash) : repository || "—", imageRepository = slash > 0 ? repository.slice(slash + 1) : "—", shortDigest = digest ? `${digest.slice(0, 19)}…${digest.slice(-12)}` : "Not pinned";
+  $("image-metadata").innerHTML = [["Registry", registry], ["Repository", imageRepository], ["Digest", shortDigest]].map(([label, item]) => `<dt>${escapeHtml(label)}</dt><dd title="${escapeHtml(item)}">${escapeHtml(item)}</dd>`).join("");
+}
 
 function renderConfigs(configs) {
   $("configs").replaceChildren(...configs.map(config => {
     const row = document.createElement("tr"), selectedByDefault = recommendedPreset(config.file);
+    row.dataset.config = config.file; row.dataset.model = config.model;
     const choice = document.createElement("td"), input = document.createElement("input"); input.type = "checkbox"; input.value = config.file; input.checked = selectedByDefault; input.name = "config"; input.setAttribute("aria-label", `Run ${config.name}`); choice.append(input);
     const preset = document.createElement("td"), title = document.createElement("b"); title.textContent = config.name; preset.append(title); if (selectedByDefault) { const badge = document.createElement("small"); badge.className = "preset-badge"; badge.textContent = "Recommended"; preset.append(badge); }
     const repetitionCell = document.createElement("td"), repetitions = document.createElement("input"); repetitions.type = "number"; repetitions.min = "1"; repetitions.step = "1"; repetitions.value = "1"; repetitions.className = "preset-repetitions"; repetitions.dataset.config = config.file; repetitions.setAttribute("aria-label", `Repetitions for ${config.name}`); repetitionCell.append(repetitions);
-    const values = [config.model === "open-loop" ? "Open-loop" : "Fixed workers", `${config.readPercent}% / ${config.writePercent}%`, config.consistency === "strong" ? "Strong" : "Eventual", presetDuration(config.durationSeconds), config.loadSummary || "Profile-defined"];
-    row.append(choice, preset, repetitionCell, ...values.map(value => { const cell = document.createElement("td"); cell.textContent = value; return cell; }));
-    input.addEventListener("change", () => { syncOverrideApplicability(); updatePresetCount(); }); return row;
+    const modelCell = document.createElement("td"); modelCell.textContent = config.model === "open-loop" ? "Open-loop" : "Fixed workers";
+    const mixCell = document.createElement("td"), mix = document.createElement("input"), mixValue = document.createElement("output"); mix.type = "range"; mix.min = "0"; mix.max = "100"; mix.step = "1"; mix.value = String(config.readPercent); mix.className = "preset-read-percent"; mix.setAttribute("aria-label", `Read percentage for ${config.name}`); mixValue.className = "mix-value"; const updateMix = () => { mixValue.textContent = `${mix.value}% R / ${100 - Number(mix.value)}% W`; }; updateMix(); mix.addEventListener("input", updateMix); mixCell.append(mix, mixValue);
+    const consistencyCell = document.createElement("td"), consistency = document.createElement("select"); consistency.className = "preset-consistency"; consistency.append(new Option("Strong", "strong"), new Option("Eventual", "eventual")); consistency.value = config.consistency; consistencyCell.append(consistency);
+    const durationCell = document.createElement("td"), duration = document.createElement("input"); duration.type = "number"; duration.min = "1"; duration.step = "1"; duration.value = String(config.durationSeconds); duration.className = "preset-duration"; duration.setAttribute("aria-label", `Duration seconds for ${config.name}`); durationCell.append(duration);
+    const loadCell = document.createElement("td"), load = document.createElement("input"); load.type = "number"; load.min = "0.001"; load.step = "0.1"; load.value = String(config.rateMultiplier || 1); load.className = "preset-load"; load.disabled = config.model !== "open-loop"; load.title = load.disabled ? "Fixed-worker workloads use concurrency" : `${config.loadSummary}; multiplier applied to every offered-load step`; load.setAttribute("aria-label", `Load multiplier for ${config.name}`); loadCell.append(load);
+    const concurrencyCell = document.createElement("td"), concurrency = document.createElement("input"); concurrency.type = "number"; concurrency.min = "1"; concurrency.step = "1"; concurrency.value = config.fixedConcurrency == null ? "" : String(config.fixedConcurrency); concurrency.placeholder = "—"; concurrency.className = "preset-concurrency"; concurrency.disabled = config.model !== "closed-loop"; concurrency.title = concurrency.disabled ? "Open-loop workloads use offered load" : "Constant worker count"; concurrency.setAttribute("aria-label", `Fixed concurrency for ${config.name}`); concurrencyCell.append(concurrency);
+    row.append(choice, preset, repetitionCell, modelCell, mixCell, consistencyCell, durationCell, loadCell, concurrencyCell);
+    input.addEventListener("change", updatePresetCount); return row;
   }));
   updatePresetCount();
 }
 
-function selectPresets(predicate) { document.querySelectorAll('input[name="config"]').forEach(input => { input.checked = predicate(input.value); }); syncOverrideApplicability(); updatePresetCount(); }
+function selectPresets(predicate) { document.querySelectorAll('input[name="config"]').forEach(input => { input.checked = predicate(input.value); }); updatePresetCount(); }
 
 function syncOverrideApplicability() {
-  if (!bootstrap) return;
-  const files = new Set([...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value));
-  const models = bootstrap.configs.filter(config => files.has(config.file)).map(config => config.model);
-  const rules = [["execution-mode", models.includes("open-loop"), "Select an open-loop workload to override request scheduling."], ["rate-multiplier", models.includes("open-loop"), "Select an open-loop workload to override offered rate."], ["fixed-concurrency", models.includes("closed-loop"), "Select a closed-loop workload to override worker concurrency."]];
-  for (const [id, enabled, reason] of rules) { $(id).disabled = !enabled; $(id).title = enabled ? "" : reason; if (!enabled) $(id).value = ""; }
+  return undefined;
 }
 
 async function load() {
@@ -47,33 +57,76 @@ async function load() {
   if (!response.ok) throw new Error(`Bootstrap failed (${response.status})`);
   bootstrap = await response.json();
   profiles($("aws-profile"), bootstrap.profiles.aws, "dynamodb_poc"); profiles($("adb-profile"), bootstrap.profiles.oci, "PITWALL_API"); profiles($("ndcs-profile"), bootstrap.profiles.oci, "PITWALL_API");
-  $("image-digest").value = bootstrap.defaults.imageDigest || "";
+  $("image-digest").value = bootstrap.defaults.imageDigest || ""; renderRunnerImage();
   $("adb-table-manual").value = localStorage.getItem("kvs-dashboard-adb-table") || "";
   renderConfigs(bootstrap.configs); syncOverrideApplicability();
   $("warnings").innerHTML = bootstrap.profiles.warnings.map(item => `<div class="callout warning">${escapeHtml(item)}</div>`).join("");
   $("connection").textContent = `${bootstrap.profiles.aws.length} AWS | ${bootstrap.profiles.oci.length} OCI profiles`; $("connection").className = "status ok";
+  void autoDiscoverActiveTarget();
   const savedRun = localStorage.getItem("kvs-dashboard-run-id"); if (savedRun) void monitorRun(savedRun, "async", true);
 }
 
 function runMode() { return document.querySelector('input[name="run-mode"]:checked').value; }
-const cloudEnabled = name => $(`cloud-${name}`).checked;
+const activeTarget = () => value("destination-product");
+const targetDiscoveryEnabled = name => selectedTargets.has(name) || activeTarget() === name;
+const cloudEnabled = name => name === "aws" ? targetDiscoveryEnabled("aws") : targetDiscoveryEnabled("adb") || targetDiscoveryEnabled("ndcs");
 function syncCloudCatalog() {
-  document.querySelector("article.provider.aws").classList.toggle("cloud-hidden", !cloudEnabled("aws"));
-  for (const selector of ["article.provider.adb", "article.provider.ndcs"]) document.querySelector(selector).classList.toggle("cloud-hidden", !cloudEnabled("oci"));
-  $("aws-enabled").disabled = !cloudEnabled("aws"); $("adb-enabled").disabled = !cloudEnabled("oci"); $("ndcs-enabled").disabled = !cloudEnabled("oci");
-  $("adb-probe-wrap").classList.toggle("cloud-hidden", !cloudEnabled("oci") || !$("adb-enabled").checked);
+  const target = activeTarget();
+  for (const name of ["aws", "adb", "ndcs"]) document.querySelector(`article.provider.${name}`).hidden = name !== target;
+  $("cloud-aws").checked = value("destination-cloud") === "aws";
+  $("cloud-oci").checked = value("destination-cloud") === "oci";
+}
+function syncDestinationProducts() {
+  const cloud = value("destination-cloud"), previous = activeTarget();
+  const products = cloud === "aws" ? [["aws", "AWS DynamoDB"]] : [["adb", "ADB DynamoDB API"], ["ndcs", "OCI NoSQL"]];
+  $("destination-product").replaceChildren(...products.map(([id, label]) => new Option(label, id)));
+  if (products.some(([id]) => id === previous)) $("destination-product").value = previous;
+  syncCloudCatalog();
+}
+function renderDestinationSummary() {
+  if (!selectedTargets.size) { $("destination-summary").innerHTML = '<p class="empty-selection">No destinations added yet.</p>'; return; }
+  const cards = [];
+  for (const name of selectedTargets) {
+    const resource = resourceValue(`${name}-table`);
+    if (name === "aws") {
+      const table = destinations?.awsTables?.find(item => (item.name || item) === resource);
+      cards.push(detailCard(name, "AWS DynamoDB", typeof table === "string" ? { name: table } : table || { name: resource }, Boolean(table)));
+    } else if (name === "adb") {
+      const table = destinations?.adbTables?.find(item => (item.name || item) === resource);
+      const recent = destinations?.recentEvidenceTables?.adb?.find(item => item.table === resource);
+      cards.push(detailCard(name, "ADB DynamoDB API", typeof table === "string" ? { name: table } : table || { name: recent?.table || resource }, Boolean(table)));
+    } else {
+      const table = destinations?.nosqlTables?.find(item => item.name === resource);
+      cards.push(detailCard(name, "OCI NoSQL", table || { name: resource }, Boolean(table)));
+    }
+  }
+  $("destination-summary").innerHTML = cards.join("");
+}
+function addDestination() {
+  const name = activeTarget(), resource = resourceValue(`${name}-table`), runner = value(`${name}-runner`);
+  if (!resource || resource === "__manual__") throw new Error("Select a table before adding the destination");
+  if (!runner) throw new Error("Select a regional runner before adding the destination");
+  selectedTargets.add(name); $("aws-enabled").checked = selectedTargets.has("aws"); $("adb-enabled").checked = selectedTargets.has("adb"); $("ndcs-enabled").checked = selectedTargets.has("ndcs");
+  renderDestinationSummary(); renderDestinationDetails();
+  $("runner-status").className = "callout"; $("runner-status").textContent = `${name.toUpperCase()} destination added. Choose another provider/product to add more.`;
 }
 function selectedRunner(id) { return discovered?.oci?.find(item => item.id === value(id)) || discovered?.aws?.find(item => item.id === value(id)) || {}; }
 function resourceValue(prefix) { return value(prefix) === "__manual__" ? value(`${prefix}-manual`) : value(prefix); }
 function specification() {
   const mode = document.querySelector('input[name="infra-mode"]:checked').value;
-  const overrides = { durationSeconds: optionalNumber("duration"), readPercent: optionalNumber("read-percent"), writePercent: optionalNumber("write-percent"), rateMultiplier: optionalNumber("rate-multiplier"), fixedConcurrency: optionalNumber("fixed-concurrency"), consistency: value("consistency") || undefined, executionMode: value("execution-mode") || undefined };
-  Object.keys(overrides).forEach(key => overrides[key] === undefined && delete overrides[key]);
   const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
   const configs = [...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value);
   const repetitionsByFile = Object.fromEntries([...document.querySelectorAll(".preset-repetitions")].map(input => [input.dataset.config, Number(input.value)]));
   const presetRepetitions = Object.fromEntries(configs.map(file => [file, repetitionsByFile[file] || 1]));
-  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: cloudEnabled("aws") && $("aws-enabled").checked, profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: cloudEnabled("oci") && $("adb-enabled").checked, profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerCompartmentId: adbRunner.compartmentId, compartmentId: value("adb-compartment"), evidenceBucket: value("adb-artifact-bucket") }, ndcs: { enabled: cloudEnabled("oci") && $("ndcs-enabled").checked, profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerCompartmentId: ndcsRunner.compartmentId, compartmentId: value("ndcs-compartment"), evidenceBucket: value("ndcs-artifact-bucket") } }, configs, presetRepetitions, overrides, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
+  const presetOverrides = Object.fromEntries([...document.querySelectorAll("#configs tr")].map(row => {
+    const readPercent = Number(row.querySelector(".preset-read-percent").value), model = row.dataset.model;
+    const item = { readPercent, writePercent: 100 - readPercent, consistency: row.querySelector(".preset-consistency").value, durationSeconds: Number(row.querySelector(".preset-duration").value) };
+    if (item.writePercent > 0) item.writeMode = "idempotent";
+    if (model === "open-loop") item.rateMultiplier = Number(row.querySelector(".preset-load").value);
+    else item.fixedConcurrency = Number(row.querySelector(".preset-concurrency").value);
+    return [row.dataset.config, item];
+  }));
+  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: selectedTargets.has("aws"), profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: selectedTargets.has("adb"), profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerCompartmentId: adbRunner.compartmentId, compartmentId: value("adb-compartment"), evidenceBucket: value("adb-artifact-bucket") }, ndcs: { enabled: selectedTargets.has("ndcs"), profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerCompartmentId: ndcsRunner.compartmentId, compartmentId: value("ndcs-compartment"), evidenceBucket: value("ndcs-artifact-bucket") } }, configs, presetRepetitions, presetOverrides, overrides: {}, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
 }
 
 function runnerOptions(select, values, preferredPattern) {
@@ -119,7 +172,7 @@ function autoscalingLabel(table) {
   if (read || write) return [read && `Read ${read.min}-${read.max}`, write && `Write ${write.min}-${write.max}`].filter(Boolean).join("; ");
   return table?.autoscaling?.mode === "NOT_DETECTED" ? "Not configured / not exposed" : "Not configured";
 }
-function detailCard(provider, table, verified = true) {
+function detailCard(target, provider, table, verified = true) {
   if (!table) return "";
   const unavailable = verified ? "Not exposed by provider inventory" : "Not live-verified";
   const mode = verified ? table.billingMode || table.capacityMode || unavailable : unavailable;
@@ -136,41 +189,27 @@ function detailCard(provider, table, verified = true) {
     ["Storage limit", storageLimit],
     ["Item count", verified ? table.itemCount == null ? unavailable : number(table.itemCount) : unavailable]
   ];
-  const verification = verified ? "" : `<div class="resource-verification"><span>The name came from local evidence; the ADB endpoint has not been queried in this lookup.</span><button type="button" class="secondary compact-button" data-action="verify-adb-metadata">Verify live metadata</button></div>`;
-  return `<article class="resource-detail"><h3>${escapeHtml(provider)} · ${escapeHtml(table.name)}</h3><p>${verified ? "Live provider metadata" : "Recent local evidence · not live-verified"}</p><dl>${rows.map(([key, item]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(item)}</dd>`).join("")}</dl>${verification}</article>`;
+  const verification = verified ? "" : `<div class="resource-verification"><span>The name came from local evidence. Select the ADB runner and refresh available resources to retrieve live metadata automatically.</span></div>`;
+  return `<article class="resource-detail"><div class="resource-detail-heading"><h3>${escapeHtml(provider)} · ${escapeHtml(table.name)}</h3><button type="button" data-remove-destination="${target}" aria-label="Remove ${escapeHtml(provider)}">×</button></div><p>${verified ? "Live provider metadata" : "Selected destination · not live-verified"}</p><dl>${rows.map(([key, item]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(item)}</dd>`).join("")}</dl>${verification}</article>`;
 }
 function renderDestinationDetails() {
-  if (!destinations) { $("destination-details").replaceChildren(); return; }
-  const aws = destinations.awsTables?.find(item => (item.name || item) === resourceValue("aws-table"));
-  const adb = destinations.adbTables?.find(item => (item.name || item) === resourceValue("adb-table"));
-  const ndcs = destinations.nosqlTables?.find(item => item.name === resourceValue("ndcs-table"));
-  const recent = destinations.recentEvidenceTables?.adb?.find(item => item.table === resourceValue("adb-table"));
-  $("destination-details").innerHTML = [detailCard("AWS DynamoDB", typeof aws === "string" ? { name: aws } : aws), detailCard("ADB DynamoDB API", typeof adb === "string" ? { name: adb } : adb, Boolean(adb)), !adb && recent ? detailCard("ADB DynamoDB API", { name: recent.table }, false) : "", detailCard("OCI NoSQL", ndcs)].join("");
+  renderDestinationSummary();
 }
 
-async function verifyAdbMetadata() {
-  if (!resourceValue("adb-table")) throw new Error("Select an ADB DynamoDB-API table first");
-  if (!value("adb-runner")) throw new Error("Select an ADB regional runner first");
-  $("adb-live-table-lookup").checked = true;
-  $("runner-status").className = "callout";
-  $("runner-status").textContent = "Verifying the selected ADB table through a read-only ListTables + DescribeTable probe on the regional runner...";
-  await lookupDestinations();
-}
-
-async function lookupDestinations({ manageButton = true } = {}) {
+async function lookupDestinations({ manageButton = true, probeAdbTables = true } = {}) {
   if (manageButton) $("discover-destinations").disabled = true; $("runner-status").className = "callout"; $("runner-status").textContent = "Step 2/2: reading accessible compartments, databases, tables, and evidence stores without modifying them...";
   let stage = "initialization";
   try {
     if (!bootstrap?.csrfToken) throw new Error("Dashboard session is not ready; reload the page");
     stage = "runner discovery";
-    if (!discovered && ($("adb-enabled").checked || $("ndcs-enabled").checked)) {
+    if (!discovered && (targetDiscoveryEnabled("adb") || targetDiscoveryEnabled("ndcs"))) {
       const ready = await discoverRunners();
       if (!ready) throw new Error("Runner discovery did not complete; see the discovery message and retry");
     }
     stage = "request preparation";
     const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
     const previous = { awsTable: resourceValue("aws-table"), adbTable: resourceValue("adb-table"), ndcsTable: resourceValue("ndcs-table") };
-    const request = { awsProfile: value("aws-profile"), awsRegion: value("aws-region"), adbOciProfile: value("adb-profile"), adbOciRegion: value("adb-region"), ndcsOciProfile: value("ndcs-profile"), ndcsOciRegion: value("ndcs-region"), adbCompartmentId: value("adb-compartment") || adbRunner.compartmentId, ndcsCompartmentId: value("ndcs-compartment") || ndcsRunner.compartmentId, adbRunnerId: adbRunner.id, adbRunnerCompartmentId: adbRunner.compartmentId, probeAdbTables: $("adb-live-table-lookup").checked, targets: { aws: cloudEnabled("aws") && $("aws-enabled").checked, adb: cloudEnabled("oci") && $("adb-enabled").checked, ndcs: cloudEnabled("oci") && $("ndcs-enabled").checked } };
+    const request = { awsProfile: value("aws-profile"), awsRegion: value("aws-region"), adbOciProfile: value("adb-profile"), adbOciRegion: value("adb-region"), ndcsOciProfile: value("ndcs-profile"), ndcsOciRegion: value("ndcs-region"), adbCompartmentId: value("adb-compartment") || adbRunner.compartmentId, ndcsCompartmentId: value("ndcs-compartment") || ndcsRunner.compartmentId, adbRunnerId: adbRunner.id, adbRunnerCompartmentId: adbRunner.compartmentId, probeAdbTables: probeAdbTables && targetDiscoveryEnabled("adb") && Boolean(adbRunner.id), targets: { aws: targetDiscoveryEnabled("aws"), adb: targetDiscoveryEnabled("adb"), ndcs: targetDiscoveryEnabled("ndcs") } };
     stage = "cloud inventory request";
     const response = await fetch("/api/discover-destinations", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(request) });
     const result = await response.json(); if (!response.ok) throw new Error(result?.error || `Destination lookup failed (${response.status})`);
@@ -205,24 +244,33 @@ async function lookupDestinations({ manageButton = true } = {}) {
     if (request.targets.aws) countParts.push(`${awsTables.length} AWS table(s)`);
     if (request.targets.adb) countParts.push(`${adbCompartments.length} ADB-profile compartment(s)`, `${adbTables.length} live ADB DynamoDB-API table(s)`, `${recentAdbTables.length} recent ADB evidence candidate(s)`);
     if (request.targets.ndcs) countParts.push(`${ndcsCompartments.length} NoSQL-profile compartment(s)`, `${nosqlTables.length} OCI NoSQL table(s)`);
-    const manualNote = !request.probeAdbTables && request.targets.adb ? recentAdbTables.length ? " ADB live probing was not requested; locally evidenced candidates must still pass benchmark preflight." : " ADB live probing was not requested; enter the exact DynamoDB-API table name manually." : "";
+    const manualNote = request.targets.adb && !adbRunner.id ? " Select an ADB runner and refresh again to load live DynamoDB-API tables." : "";
     $("runner-status").className = `callout${mismatch || partialErrors.length ? " warning" : ""}`; $("runner-status").innerHTML = `<b>${partialErrors.length ? "Partial lookup complete." : "Lookup complete."}</b> ${countParts.join(", ")}.${manualNote}${mismatch ? " The selected ADB runner credentials belong to a database outside the selected compartment." : ""}${errorList}`;
   } catch (error) { console.error("Destination lookup failed", { stage, error }); $("runner-status").className = "callout error"; $("runner-status").textContent = `Destination lookup failed during ${stage}: ${error?.message || String(error)}`; }
   finally { if (manageButton) $("discover-destinations").disabled = false; }
 }
 
-async function discoverDestinations() {
+async function discoverDestinations({ automatic = false } = {}) {
   $("discover-destinations").disabled = true;
   try {
     const ready = await discoverRunners({ manageButton: false });
-    if (ready) await lookupDestinations({ manageButton: false });
+    if (ready) await lookupDestinations({ manageButton: false, probeAdbTables: !automatic });
   } finally { $("discover-destinations").disabled = false; }
+}
+
+function autoDiscoverActiveTarget() {
+  if (!bootstrap) return null;
+  if (automaticDiscovery) { automaticDiscoveryPending = true; return automaticDiscovery; }
+  automaticDiscovery = discoverDestinations({ automatic: true }).finally(() => {
+    automaticDiscovery = null;
+    if (automaticDiscoveryPending) { automaticDiscoveryPending = false; void autoDiscoverActiveTarget(); }
+  });
+  return automaticDiscovery;
 }
 
 function renderReview() {
   const spec = specification(); const targets = Object.entries(spec.targets).filter(([, target]) => target.enabled).map(([name, target]) => `${name.toUpperCase()} (${target.profile || "no profile"}, ${target.region})`);
-  const overrideText = Object.keys(spec.overrides).length ? Object.entries(spec.overrides).map(([key, item]) => `${key}: ${item}`).join(", ") : "Profile defaults";
-  const repetitions = Object.values(spec.presetRepetitions).reduce((sum, count) => sum + count, 0), cards = [["Targets", targets.join("; ") || "None"], ["Infrastructure", spec.infrastructure.mode], ["Workloads", `${spec.configs.length} preset(s), ${repetitions} session(s)`], ["Execution", `${spec.execution.mode}; immutable parameters`], ["Overrides", overrideText]];
+  const repetitions = Object.values(spec.presetRepetitions).reduce((sum, count) => sum + count, 0), cards = [["Targets", targets.join("; ") || "None"], ["Infrastructure", spec.infrastructure.mode], ["Workloads", `${spec.configs.length} preset(s), ${repetitions} session(s)`], ["Execution", `${spec.execution.mode}; immutable parameters`], ["Preset values", "Configured independently in the workload matrix"]];
   $("review-summary").innerHTML = cards.map(([label, item]) => `<div class="summary-card"><span>${escapeHtml(label)}</span><b>${escapeHtml(item)}</b></div>`).join("");
 }
 
@@ -313,23 +361,26 @@ async function startCloud() {
 }
 
 document.querySelectorAll('input[name="infra-mode"]').forEach(input => input.addEventListener("change", () => $("managed-fields").classList.toggle("hidden", document.querySelector('input[name="infra-mode"]:checked').value !== "managed")));
-for (const id of ["cloud-aws", "cloud-oci"]) $(id).addEventListener("change", () => { syncCloudCatalog(); discovered = null; destinations = null; });
-$("adb-enabled").addEventListener("change", syncCloudCatalog);
+$("destination-cloud").addEventListener("change", () => { syncDestinationProducts(); discovered = null; destinations = null; void autoDiscoverActiveTarget(); });
+$("destination-product").addEventListener("change", () => { syncCloudCatalog(); discovered = null; destinations = null; void autoDiscoverActiveTarget(); });
+$("add-destination").addEventListener("click", () => { try { addDestination(); } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error.message; } });
+$("destination-summary").addEventListener("click", event => { const button = event.target.closest("[data-remove-destination]"); if (!button) return; selectedTargets.delete(button.dataset.removeDestination); $(`${button.dataset.removeDestination}-enabled`).checked = false; renderDestinationSummary(); renderDestinationDetails(); });
 document.querySelectorAll("[data-go-step]").forEach(button => button.addEventListener("click", () => showStep(Number(button.dataset.goStep))));
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
 for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => { syncManual(prefix); renderDestinationDetails(); });
-$("destination-details").addEventListener("click", event => { if (event.target.closest('[data-action="verify-adb-metadata"]')) void verifyAdbMetadata().catch(error => { $("runner-status").className = "callout error"; $("runner-status").textContent = error?.message || String(error); }); });
 $("adb-table-manual").addEventListener("input", () => localStorage.setItem("kvs-dashboard-adb-table", value("adb-table-manual")));
 document.querySelectorAll(".option-search").forEach(input => input.addEventListener("input", () => filterOptions(input)));
 document.querySelectorAll('#live-series-controls input').forEach(input => input.addEventListener("change", renderLiveCharts));
-for (const id of ["adb-compartment", "ndcs-compartment"]) $(id).addEventListener("change", () => { if (destinations) void lookupDestinations(); });
+for (const id of ["adb-compartment", "ndcs-compartment"]) $(id).addEventListener("change", () => { if (destinations) void lookupDestinations({ probeAdbTables: false }); });
 for (const context of ["adb", "ndcs"]) for (const suffix of ["profile", "region"]) $(`${context}-${suffix}`).addEventListener("change", () => {
   discovered = null; destinations = null;
   $("adb-runner").innerHTML = '<option value="">Discover runners again</option>'; $("ndcs-runner").innerHTML = '<option value="">Discover runners again</option>';
   if (context === "adb") { $("adb-compartment").innerHTML = '<option value="">Lookup using selected ADB profile</option>'; $("adb-database").innerHTML = '<option value="">Lookup Autonomous Databases</option>'; $("adb-table").innerHTML = '<option value="">Lookup DynamoDB-API tables</option>'; }
   else { $("ndcs-compartment").innerHTML = '<option value="">Lookup using selected NoSQL profile</option>'; $("ndcs-table").innerHTML = '<option value="">Lookup OCI NoSQL tables</option>'; }
+  void autoDiscoverActiveTarget();
 });
 $("select-recommended").addEventListener("click", () => selectPresets(recommendedPreset)); $("select-all-presets").addEventListener("click", () => selectPresets(() => true)); $("clear-presets").addEventListener("click", () => selectPresets(() => false));
-$("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-destinations").addEventListener("click", discoverDestinations); $("refresh").addEventListener("click", () => load().catch(showLoadError));
+$("image-digest").addEventListener("input", renderRunnerImage);
+$("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-destinations").addEventListener("click", discoverDestinations);
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
-syncCloudCatalog(); showStep(1); load().catch(showLoadError);
+syncDestinationProducts(); renderDestinationSummary(); showStep(1); load().catch(showLoadError);
