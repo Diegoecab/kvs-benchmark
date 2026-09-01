@@ -48,6 +48,9 @@ test("cloud adapter source remains platform-neutral", () => {
   assert.ok((source.match(/\/app\/results:z/g) || []).length >= 2, "OCI workload and evidence uploader must share the SELinux label");
   assert.match(source, /runtimeArguments\(spec, session, \{ workload: isRun \}\)/);
   assert.match(source, /datasetOptions = new Set\(\["consistency"\]\)/);
+  assert.match(source, /uploader_pid=\$!\\nset \+e\\n\(\\n\$\{guardedInvocation\}\\n\)\\ncode=\$\?/);
+  assert.doesNotMatch(source, /AWS_REGION=us-ashburn-1/);
+  assert.match(source, /AWS_REGION=\$\{spec\.adbOciRegion\}/);
 });
 
 test("cloud acceptance can run a single enabled target without requiring OCI settings", async t => {
