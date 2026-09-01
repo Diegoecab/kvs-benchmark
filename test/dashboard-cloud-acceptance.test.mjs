@@ -45,6 +45,9 @@ test("cloud adapter source remains platform-neutral", () => {
   assert.doesNotMatch(source, /\.cmd\b|powershell|[A-Z]:\\\\/i);
   for (const executable of ["aws", "oci"]) assert.match(source, new RegExp(`"${executable}"`));
   assert.doesNotMatch(source, /"ssh"|"scp"|KVS_OCI_SSH_KEY/);
+  assert.ok((source.match(/\/app\/results:z/g) || []).length >= 2, "OCI workload and evidence uploader must share the SELinux label");
+  assert.match(source, /runtimeArguments\(spec, session, \{ workload: isRun \}\)/);
+  assert.match(source, /datasetOptions = new Set\(\["consistency"\]\)/);
 });
 
 test("cloud acceptance can run a single enabled target without requiring OCI settings", async t => {

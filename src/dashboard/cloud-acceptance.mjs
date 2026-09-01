@@ -60,10 +60,11 @@ function visible(state) {
   return { schemaVersion: 1, id: state.id, kind: "cloud-benchmark", mode: state.spec.mode, status: state.status, createdAt: state.createdAt, startedAt: state.startedAt || null, completedAt: state.completedAt || null, stages: state.stages, targetStatus: state.targetStatus, sharedStartAt: state.sharedStartAt || null, currentSession: state.currentSession || null, matrix: state.spec.matrix, certificates: state.certificates || null, summaries: state.summaries || null, sessionResults: state.sessionResults || [], targetMetrics: state.targetMetrics || {}, logs: state.logs || [], error: state.error || null, output: state.outputRelative, downloadUrl: state.archiveFile ? `/api/runs/${encodeURIComponent(state.id)}/download` : null };
 }
 
-function runtimeArguments(spec, session) {
+function runtimeArguments(spec, session, { workload = true } = {}) {
   const ignored = new Set(session?.ignoredOverrides || []), values = session?.effectiveOverrides || spec.overrides || {};
   const names = { durationSeconds: "duration-seconds", fixedConcurrency: "fixed-concurrency", readPercent: "read-percent", writePercent: "write-percent", writeMode: "write-mode", rateMultiplier: "rate-multiplier", executionMode: "execution-mode", consistency: "consistency" };
-  return Object.entries(names).filter(([name]) => values[name] != null && !ignored.has(name)).map(([name, option]) => `--${option}=${shellQuote(values[name])}`).join(" ");
+  const datasetOptions = new Set(["consistency"]);
+  return Object.entries(names).filter(([name]) => values[name] != null && !ignored.has(name) && (workload || datasetOptions.has(name))).map(([name, option]) => `--${option}=${shellQuote(values[name])}`).join(" ");
 }
 
 function liveMonitor(root, scheduled, upload = "") {
@@ -80,11 +81,11 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
   if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nif ! sudo -n podman --version >/dev/null 2>&1; then echo "Runner prerequisite failed: the ocarun user requires passwordless access to Podman for the benchmark commands. Apply the documented sudoers policy or replace this runner." >&2; exit 20; fi\nsudo -n podman image exists ${shellQuote(spec.image)}\n`;
   const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : `${action} --rate=20 --max-inflight=16`;
   const outputArgument = action === "doctor" ? "results/doctor.json" : "results";
-  const invocation = `sudo podman run --rm --network host "${'${envargs[@]}'}" -v "$root:/app/results:Z" "$image" ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session)} --target=${target} --table=${shellQuote(table)} --output=${outputArgument}`;
+  const invocation = `sudo podman run --rm --network host "${'${envargs[@]}'}" -v "$root:/app/results:z" "$image" ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=${target} --table=${shellQuote(table)} --output=${outputArgument}`;
   const liveInvocation = `${liveMonitor("$root", session.scheduledOperationsPerTarget)}${invocation} &\nbenchmark_pid=$!\nwhile kill -0 "$benchmark_pid" 2>/dev/null; do write_progress; sleep 1; done\nset +e\nwait "$benchmark_pid"\ncode=$?\nset -e\nwrite_progress\nexit "$code"`;
   const guardedInvocation = action === "doctor" ? `set +e\n${invocation}\ncode=$?\nset -e\nif [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then exit "$code"; fi` : isRun ? liveInvocation : invocation;
   const prefix = `results/${spec.runId}/${action}/${target}`;
-  const sync = `sudo podman run --rm --network host -e OCI_REGION=${shellQuote(region)} -v "$root:/app/results:Z" --entrypoint node "$image" src/cloud/oci-evidence.mjs --directory=/app/results --bucket=${shellQuote(bucket)} --prefix=${shellQuote(prefix)}`;
+  const sync = `sudo podman run --rm --network host -e OCI_REGION=${shellQuote(region)} -v "$root:/app/results:z" --entrypoint node "$image" src/cloud/oci-evidence.mjs --directory=/app/results --bucket=${shellQuote(bucket)} --prefix=${shellQuote(prefix)}`;
   if (isRun) return `#!/usr/bin/env bash\nset -euo pipefail\n${env}\nroot=${shellQuote(output)}\nimage=${shellQuote(spec.image)}\nsudo mkdir -p "$root" && sudo chmod 0777 "$root"\nsudo podman image exists "$image"\nsudo chronyc tracking > "$root/clock.txt"\n${sync} --marker=/app/results/.benchmark-complete --interval-ms=2000 &\nuploader_pid=$!\nset +e\n${guardedInvocation}\ncode=$?\nset -e\ntouch "$root/.benchmark-complete"\nwait "$uploader_pid"\nexit "$code"\n`;
   return `#!/usr/bin/env bash\nset -euo pipefail\n${env}\nroot=${shellQuote(output)}\nimage=${shellQuote(spec.image)}\nsudo mkdir -p "$root" && sudo chmod 0777 "$root"\nsudo podman image exists "$image"\nsudo chronyc tracking > "$root/clock.txt"\n${guardedInvocation}\n${sync}\n`;
 }
@@ -92,7 +93,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
 function awsCommands(spec, action, output, startAt, session = spec.matrix[0]) {
   const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : `${action} --rate=20 --max-inflight=16`;
   const prefix = `results/${spec.runId}/${action}/aws`;
-  const invocation = `podman run --rm --network host -e AWS_REGION=${spec.awsRegion} -v $root:/app/results:Z $image ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session)} --target=aws --table=${spec.awsTable} --output=results`;
+  const invocation = `podman run --rm --network host -e AWS_REGION=${spec.awsRegion} -v $root:/app/results:Z $image ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=aws --table=${spec.awsTable} --output=results`;
   const runCommand = isRun ? `${liveMonitor("$root", session.scheduledOperationsPerTarget, `/usr/local/bin/aws s3 cp "$root/progress.json" s3://${spec.bucket}/${prefix}/progress.json --only-show-errors || true`)}${invocation} & benchmark_pid=$!; while kill -0 "$benchmark_pid" 2>/dev/null; do write_progress; sleep 1; done; set +e; wait "$benchmark_pid"; code=$?; set -e; write_progress; if [ "$code" -ne 0 ]; then exit "$code"; fi` : invocation;
   return ["set -eu", `root=${output}`, `image=${spec.image}`, "mkdir -p $root && chmod 0777 $root", "podman image exists $image", "chronyc tracking > $root/clock.txt", runCommand, `/usr/local/bin/aws s3 cp $root s3://${spec.bucket}/${prefix} --recursive --only-show-errors`];
 }
