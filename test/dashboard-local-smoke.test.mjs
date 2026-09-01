@@ -35,4 +35,5 @@ test("local dashboard smoke run executes the real harness and persists evidence"
   for (const file of ["index.html", "manifest-sha256.json", `${started.id}-benchmark-output.zip`]) assert.equal(fs.existsSync(path.join(output, file)), true);
   assert.match(fs.readFileSync(path.join(output, "index.html"), "utf8"), /KVS local smoke benchmark/);
   assert.equal(fs.readFileSync(runs.download(started.id)).readUInt32LE(0), 0x04034b50);
+  const restored = new LocalSmokeRuns({ configFile, outputRoot: path.join(root, "runs") }); assert.equal(restored.get(started.id).status, "complete"); assert.equal(fs.readFileSync(restored.download(started.id)).readUInt32LE(0), 0x04034b50);
 });

@@ -5,7 +5,7 @@
   <title>KVS Benchmark Control</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="pipeline.css"><link rel="stylesheet" href="workloads.css"><link rel="stylesheet" href="filters.css"><link rel="stylesheet" href="charts.css"><link rel="stylesheet" href="theme.css">
 </head>
 <body>
-  <header class="hero"><div><p class="eyebrow">LOCAL CONTROL PLANE</p><h1>KVS Benchmark Control</h1><p>Configure, review, execute, and package reproducible KVS benchmarks.</p></div><div id="connection" class="status" role="status" aria-live="polite">Discovering profiles...</div></header>
+  <header class="hero"><div><p class="eyebrow">LOCAL CONTROL PLANE</p><h1>KVS Benchmark Control</h1><p>Configure, review, execute, and package reproducible KVS benchmarks.</p></div><div class="header-state"><div id="connection" class="status" role="status" aria-live="polite">Discovering profiles...</div><div class="draft-state"><span id="draft-status">Configuration autosave enabled</span><button id="reset-draft" type="button">Reset configuration</button></div></div></header>
   <main>
     <ol class="stepper" aria-label="Benchmark setup">
       <li><button type="button" data-go-step="1"><span>1</span>Infrastructure</button></li><li><button type="button" data-go-step="2"><span>2</span>Destinations</button></li><li><button type="button" data-go-step="3"><span>3</span>Workloads</button></li><li><button type="button" data-go-step="4"><span>4</span>Execution</button></li><li><button type="button" data-go-step="5"><span>5</span>Review &amp; run</button></li>

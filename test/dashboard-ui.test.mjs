@@ -37,6 +37,7 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /Provisional performance timeline/); assert.match(app, /function renderLiveCharts/);
   assert.match(html, /id="execution-log"/); assert.match(html, /id="pause-log"/); assert.match(html, /id="copy-log"/); assert.match(html, /id="clear-log"/);
   assert.match(app, /function renderExecutionLog/); assert.match(app, /class="pipeline-track"/); assert.match(app, /aria-valuenow/); assert.match(app, /run-light/);
+  assert.match(html, /id="draft-status"/); assert.match(html, /id="reset-draft"/); assert.match(app, /kvs-dashboard-draft-v1/); assert.match(app, /function saveDraft/); assert.match(app, /async function restoreDraft/);
   assert.match(app, /function syncLiveChartVisibility/);
   assert.match(app, /Waiting for the workload stage and the first runner sample/);
   assert.match(html, /canonical dataset preload and certification/);

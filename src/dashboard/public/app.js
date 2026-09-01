@@ -18,6 +18,39 @@ let terminalPaused = false;
 const selectedTargets = new Set();
 let automaticDiscovery = null;
 let automaticDiscoveryPending = false;
+const draftKey = "kvs-dashboard-draft-v1";
+const incompatibleRunnerKey = "kvs-dashboard-incompatible-runners-v1";
+const incompatibleRunners = new Set((() => { try { const values = JSON.parse(localStorage.getItem(incompatibleRunnerKey)); return Array.isArray(values) ? values : []; } catch { return []; } })());
+const draftFieldIds = ["infra-repo", "infra-ref", "infra-workspace", "destination-cloud", "destination-product", "aws-profile", "aws-region", "aws-runner", "aws-table", "aws-table-manual", "artifact-bucket", "adb-profile", "adb-region", "adb-compartment", "adb-database", "adb-runner", "adb-table", "adb-table-manual", "adb-artifact-bucket", "ndcs-profile", "ndcs-region", "ndcs-compartment", "ndcs-runner", "ndcs-table", "ndcs-table-manual", "ndcs-artifact-bucket", "image-digest"];
+let draftSaveTimer = null;
+let restoringDraft = false;
+
+function readDraft() { try { const draft = JSON.parse(localStorage.getItem(draftKey)); return draft?.schemaVersion === 1 ? draft : null; } catch { return null; } }
+function draftSnapshot() {
+  const fields = Object.fromEntries(draftFieldIds.map(id => [id, $(id)?.value ?? ""]));
+  const presets = Object.fromEntries([...document.querySelectorAll("#configs tr")].map(row => [row.dataset.config, { selected: row.querySelector('input[name="config"]').checked, repetitions: row.querySelector(".preset-repetitions").value, readPercent: row.querySelector(".preset-read-percent").value, consistency: row.querySelector(".preset-consistency").value, duration: row.querySelector(".preset-duration").value, load: row.querySelector(".preset-load")?.value, concurrency: row.querySelector(".preset-concurrency")?.value }]));
+  return { schemaVersion: 1, savedAt: new Date().toISOString(), step: currentStep, infrastructureMode: document.querySelector('input[name="infra-mode"]:checked')?.value, runMode: runMode(), selectedTargets: [...selectedTargets], fields, presets };
+}
+function saveDraft() { if (restoringDraft || !bootstrap) return; const draft = draftSnapshot(); localStorage.setItem(draftKey, JSON.stringify(draft)); $("draft-status").textContent = `Saved locally at ${new Date(draft.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`; }
+function scheduleDraftSave() { if (restoringDraft) return; clearTimeout(draftSaveTimer); draftSaveTimer = setTimeout(saveDraft, 250); }
+function setDraftField(id, item) { const element = $(id); if (!element || item == null) return; if (element.tagName === "SELECT" && ![...element.options].some(option => option.value === String(item))) return; element.value = String(item); }
+function applyPresetDraft(presets = {}) { for (const row of document.querySelectorAll("#configs tr")) { const item = presets[row.dataset.config]; if (!item) continue; row.querySelector('input[name="config"]').checked = Boolean(item.selected); for (const [selector, key] of [[".preset-repetitions", "repetitions"], [".preset-read-percent", "readPercent"], [".preset-consistency", "consistency"], [".preset-duration", "duration"], [".preset-load", "load"], [".preset-concurrency", "concurrency"]]) { const control = row.querySelector(selector); if (control && item[key] != null) control.value = item[key]; } row.querySelector(".preset-read-percent").dispatchEvent(new Event("input")); } updatePresetCount(); }
+async function restoreDraft(draft) {
+  if (!draft) { void autoDiscoverActiveTarget(); return; }
+  restoringDraft = true;
+  for (const id of draftFieldIds) setDraftField(id, draft.fields?.[id]);
+  const infra = document.querySelector(`input[name="infra-mode"][value="${CSS.escape(draft.infrastructureMode || "existing")}"]`); if (infra) infra.checked = true;
+  const mode = document.querySelector(`input[name="run-mode"][value="${CSS.escape(draft.runMode || "async")}"]`); if (mode) mode.checked = true;
+  selectedTargets.clear(); for (const target of draft.selectedTargets || []) if (["aws", "adb", "ndcs"].includes(target)) selectedTargets.add(target);
+  syncDestinationProducts(); setDraftField("destination-product", draft.fields?.["destination-product"]); syncCloudCatalog(); applyPresetDraft(draft.presets);
+  restoringDraft = false;
+  await discoverDestinations({ automatic: true });
+  restoringDraft = true; for (const id of draftFieldIds) setDraftField(id, draft.fields?.[id]); restoringDraft = false;
+  for (const target of ["aws", "adb", "ndcs"]) $(`${target}-enabled`).checked = selectedTargets.has(target);
+  for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
+  renderDestinationSummary(); renderDestinationDetails(); syncLiveChartVisibility(); showStep(draft.step || 1);
+  $("draft-status").textContent = `Draft restored from ${new Date(draft.savedAt).toLocaleString()}`;
+}
 
 function selected(select, preferred) { if (!select.options.length) return; ([...select.options].find(option => option.value === preferred) || select.options[0]).selected = true; }
 function profiles(select, values, preferred) { select.size = 1; select.replaceChildren(...values.map(item => new Option(item, item))); selected(select, preferred); }
@@ -60,13 +93,14 @@ async function load() {
   const response = await fetch("/api/bootstrap", { cache: "no-store" });
   if (!response.ok) throw new Error(`Bootstrap failed (${response.status})`);
   bootstrap = await response.json();
-  profiles($("aws-profile"), bootstrap.profiles.aws, "dynamodb_poc"); profiles($("adb-profile"), bootstrap.profiles.oci, "PITWALL_API"); profiles($("ndcs-profile"), bootstrap.profiles.oci, "PITWALL_API");
+  const draft = readDraft();
+  profiles($("aws-profile"), bootstrap.profiles.aws, draft?.fields?.["aws-profile"] || "dynamodb_poc"); profiles($("adb-profile"), bootstrap.profiles.oci, draft?.fields?.["adb-profile"] || "PITWALL_API"); profiles($("ndcs-profile"), bootstrap.profiles.oci, draft?.fields?.["ndcs-profile"] || "PITWALL_API");
   $("image-digest").value = bootstrap.defaults.imageDigest || ""; renderRunnerImage();
   $("adb-table-manual").value = localStorage.getItem("kvs-dashboard-adb-table") || "";
   renderConfigs(bootstrap.configs); syncOverrideApplicability();
   $("warnings").innerHTML = bootstrap.profiles.warnings.map(item => `<div class="callout warning">${escapeHtml(item)}</div>`).join("");
   $("connection").textContent = `${bootstrap.profiles.aws.length} AWS | ${bootstrap.profiles.oci.length} OCI profiles`; $("connection").className = "status ok";
-  void autoDiscoverActiveTarget();
+  await restoreDraft(draft);
   const savedRun = localStorage.getItem("kvs-dashboard-run-id"); if (savedRun) void monitorRun(savedRun, "async", true);
 }
 
@@ -118,6 +152,7 @@ function addDestination() {
   selectedTargets.add(name); $("aws-enabled").checked = selectedTargets.has("aws"); $("adb-enabled").checked = selectedTargets.has("adb"); $("ndcs-enabled").checked = selectedTargets.has("ndcs");
   renderDestinationSummary(); renderDestinationDetails();
   $("runner-status").className = "callout"; $("runner-status").textContent = `${name.toUpperCase()} destination added. Choose another provider/product to add more.`;
+  scheduleDraftSave();
 }
 function selectedRunner(id) { return discovered?.oci?.find(item => item.id === value(id)) || discovered?.aws?.find(item => item.id === value(id)) || {}; }
 function resourceValue(prefix) { return value(prefix) === "__manual__" ? value(`${prefix}-manual`) : value(prefix); }
@@ -140,8 +175,16 @@ function specification() {
 
 function runnerOptions(select, values, preferredPattern) {
   const list = Array.isArray(values) ? values.filter(item => item && typeof item === "object") : [];
-  select.replaceChildren(new Option("Select a discovered runner", ""), ...list.map(item => new Option(`${item.name || "Unnamed"} | ${item.placement || "unknown"} | ${item.remoteControl || "unknown"}`, item.id || "")));
-  const preferred = list.find(item => preferredPattern.test(item.name || "")); if (preferred) select.value = preferred.id;
+  select.replaceChildren(new Option("Select a discovered runner", ""), ...list.map(item => { const blocked = incompatibleRunners.has(item.id), option = new Option(`${item.name || "Unnamed"} | ${item.placement || "unknown"} | ${item.remoteControl || "unknown"}${blocked ? " | INCOMPATIBLE: replace or repair" : ""}`, item.id || ""); option.disabled = blocked; return option; }));
+  const preferred = list.find(item => !incompatibleRunners.has(item.id) && preferredPattern.test(item.name || "")); if (preferred) select.value = preferred.id;
+}
+function flagIncompatibleRunner(run) {
+  if (run.status !== "failed" || !/ocarun user requires passwordless access to Podman/i.test(run.error || "")) return;
+  const target = /-adb-preflight/i.test(run.error) ? "adb" : /-ndcs-preflight/i.test(run.error) ? "ndcs" : null; if (!target) return;
+  const runner = value(`${target}-runner`); if (!runner || incompatibleRunners.has(runner)) return;
+  incompatibleRunners.add(runner); localStorage.setItem(incompatibleRunnerKey, JSON.stringify([...incompatibleRunners]));
+  const option = [...$(`${target}-runner`).options].find(item => item.value === runner); if (option) { option.disabled = true; option.textContent += " | INCOMPATIBLE: replace or repair"; }
+  selectedTargets.delete(target); $(`${target}-enabled`).checked = false; $(`${target}-runner`).value = ""; renderDestinationSummary(); scheduleDraftSave();
 }
 
 async function discoverRunners({ manageButton = true } = {}) {
@@ -289,6 +332,7 @@ function showStep(step) {
   $("back").disabled = currentStep === 1; $("next").hidden = currentStep === 5; $("step-label").textContent = `Step ${currentStep} of 5`;
   if (currentStep === 5) { renderReview(); void preview(); }
   window.scrollTo({ top: 0, behavior: "smooth" });
+  scheduleDraftSave();
 }
 
 function showPreview(preview) {
@@ -371,6 +415,7 @@ function showSmoke(run) {
   if (cloud && Object.keys(targetMetrics).length) $("live-stats").innerHTML = Object.entries(targetMetrics).map(([target, metric]) => `<div class="target-live provider-${escapeHtml(target)}"><h4>${escapeHtml(target.toUpperCase())}${metric.provisional ? " · LIVE PREVIEW" : " · FINAL"}</h4><div class="stats"><div class="stat"><span>Completed</span><b>${number(metric.completed)}</b></div><div class="stat"><span>Failed</span><b>${number(metric.failed)}</b></div><div class="stat"><span>Ops/s</span><b>${number(metric.operationsPerSecond)}</b></div><div class="stat"><span>In flight</span><b>${number(metric.inFlight)}</b></div><div class="stat"><span>Latest latency ms</span><b>${number(metric.latestLatencyMs)}</b></div><div class="stat"><span>${metric.provisional ? "Rolling P95 ms" : "Final P95 ms"}</span><b>${number(metric.rollingP95Ms ?? metric.p95)}</b></div><div class="stat"><span>Final P99 ms</span><b>${number(metric.p99)}</b></div><div class="stat"><span>Final max ms</span><b>${number(metric.max)}</b></div></div></div>`).join("");
   else { const cloudCompleted = run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.completed, 0) : null; const values = [["Completed", cloudCompleted ?? progress.completed ?? 0], ["Failed", progress.failed ?? (run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.failed, 0) : 0)], ["Current ops/s", progress.achievedOperationsPerSecond ?? run.summary?.achievedOperationsPerSecond], ["In flight", progress.inFlight ?? 0], ["Latest latency ms", progress.latestLatencyMs], ["Final P95 ms", latency.p95]]; $("live-stats").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join(""); }
   renderExecutionLog(run);
+  flagIncompatibleRunner(run);
   $("smoke-detail").textContent = JSON.stringify({ kind: run.kind, mode: run.mode, status: run.status, startedAt: run.startedAt, completedAt: run.completedAt, targetStatus: run.targetStatus, certificates: run.certificates, summaries: run.summaries, evidence: run.output, latestOperation: progress.latestOperation, latestError: progress.latestError }, null, 2);
   $("download-output").classList.toggle("hidden", !run.downloadUrl); if (run.downloadUrl) $("download-output").href = run.downloadUrl;
   $("start-smoke").disabled = !terminal; $("start-benchmark").disabled = !terminal; if (terminal) localStorage.removeItem("kvs-dashboard-run-id");
@@ -397,7 +442,7 @@ document.querySelectorAll('input[name="infra-mode"]').forEach(input => input.add
 $("destination-cloud").addEventListener("change", () => { syncDestinationProducts(); discovered = null; destinations = null; void autoDiscoverActiveTarget(); });
 $("destination-product").addEventListener("change", () => { syncCloudCatalog(); discovered = null; destinations = null; void autoDiscoverActiveTarget(); });
 $("add-destination").addEventListener("click", () => { try { addDestination(); } catch (error) { $("runner-status").className = "callout error"; $("runner-status").textContent = error.message; } });
-$("destination-summary").addEventListener("click", event => { const button = event.target.closest("[data-remove-destination]"); if (!button) return; selectedTargets.delete(button.dataset.removeDestination); $(`${button.dataset.removeDestination}-enabled`).checked = false; renderDestinationSummary(); renderDestinationDetails(); });
+$("destination-summary").addEventListener("click", event => { const button = event.target.closest("[data-remove-destination]"); if (!button) return; selectedTargets.delete(button.dataset.removeDestination); $(`${button.dataset.removeDestination}-enabled`).checked = false; renderDestinationSummary(); renderDestinationDetails(); scheduleDraftSave(); });
 document.querySelectorAll("[data-go-step]").forEach(button => button.addEventListener("click", () => showStep(Number(button.dataset.goStep))));
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
 for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => { syncManual(prefix); renderDestinationDetails(); });
@@ -418,6 +463,9 @@ $("image-digest").addEventListener("input", renderRunnerImage);
 $("pause-log").addEventListener("click", () => { terminalPaused = !terminalPaused; $("pause-log").textContent = terminalPaused ? "Resume" : "Pause"; $("pause-log").setAttribute("aria-pressed", String(terminalPaused)); if (!terminalPaused && terminalRunId) renderExecutionLog({ id: terminalRunId, logs: terminalLogs }); });
 $("clear-log").addEventListener("click", () => { terminalClearedCount = terminalLogs.length; $("execution-log").innerHTML = '<div class="terminal-empty"><span>$</span> View cleared. New events will continue to appear.</div>'; });
 $("copy-log").addEventListener("click", async () => { const button = $("copy-log"); try { await navigator.clipboard.writeText(terminalText(terminalLogs.slice(terminalClearedCount))); button.textContent = "Copied"; } catch { button.textContent = "Copy failed"; } setTimeout(() => { button.textContent = "Copy"; }, 1500); });
+$("reset-draft").addEventListener("click", () => { localStorage.removeItem(draftKey); localStorage.removeItem("kvs-dashboard-adb-table"); location.reload(); });
+document.querySelector("main").addEventListener("input", event => { if (!event.target.matches(".option-search") && event.target.id !== "write-authorization") scheduleDraftSave(); });
+document.querySelector("main").addEventListener("change", event => { if (event.target.id !== "write-authorization") scheduleDraftSave(); });
 $("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-destinations").addEventListener("click", discoverDestinations);
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
 syncDestinationProducts(); renderDestinationSummary(); syncLiveChartVisibility(); showStep(1); load().catch(showLoadError);

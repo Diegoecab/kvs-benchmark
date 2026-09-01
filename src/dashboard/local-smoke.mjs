@@ -6,6 +6,7 @@ import { readConfig, scheduledOperationCount } from "../core/config.mjs";
 import { runOpenLoop } from "../core/open-loop.mjs";
 import { createMockProvider } from "../providers/mock.mjs";
 import { finalizeLocalArtifact } from "./artifact.mjs";
+import { readRunStates, writeStateAtomic } from "./file-state.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const defaultConfig = path.join(repositoryRoot, "configs", "smoke.json");
@@ -36,7 +37,13 @@ export class LocalSmokeRuns {
     this.outputRoot = outputRoot;
     this.startDelayMs = startDelayMs;
     this.runs = new Map();
+    for (const state of readRunStates(outputRoot)) {
+      if (["queued", "running"].includes(state.status)) { state.status = "failed"; state.completedAt = new Date().toISOString(); state.error = "Dashboard restarted while the local functional test was active."; state.logs ||= []; state.logs.push({ at: state.completedAt, level: "error", stage: "local-smoke", target: "mock", message: state.error }); }
+      if (state.archiveFile && !fs.existsSync(state.archiveFile)) state.archiveFile = null;
+      this.runs.set(state.id, state); this.persist(state);
+    }
   }
+  persist(state) { writeStateAtomic(state.output, state); }
 
   start({ mode = "async" } = {}) {
     if (!["async", "live"].includes(mode)) throw new Error("mode must be async or live");
@@ -54,7 +61,7 @@ export class LocalSmokeRuns {
       progress: { scheduled: scheduledOperationCount(loaded.config), accounted: 0, completed: 0, failed: 0, schedulerDrops: 0 },
       logs: [{ at: new Date().toISOString(), level: "info", stage: "local-smoke", target: "mock", message: "Local functional test queued" }],
     };
-    this.runs.set(id, state);
+    this.runs.set(id, state); this.persist(state);
     void this.execute(state, loaded);
     return visible(state);
   }
@@ -72,6 +79,7 @@ export class LocalSmokeRuns {
       state.status = "running";
       state.startedAt = new Date().toISOString();
       state.logs.push({ at: state.startedAt, level: "info", stage: "local-smoke", target: "mock", message: "Mock-provider workload started" });
+      this.persist(state);
       provider = await createMockProvider({ config: loaded.config });
       const summary = await runOpenLoop({
         config: loaded.config,
@@ -81,7 +89,7 @@ export class LocalSmokeRuns {
         table: "local-dashboard-smoke",
         output: state.output,
         startAt: new Date(Date.now() + this.startDelayMs).toISOString(),
-        onProgress: progress => { state.progress = progress; },
+        onProgress: progress => { state.progress = progress; this.persist(state); },
       });
       state.summary = summary;
       state.status = summary.harnessPassed ? "complete" : "failed";
@@ -94,6 +102,7 @@ export class LocalSmokeRuns {
       state.completedAt = new Date().toISOString();
       state.logs.push({ at: state.completedAt, level: "error", stage: "local-smoke", target: "mock", message: error.message });
     } finally {
+      this.persist(state);
       await provider?.close();
     }
   }

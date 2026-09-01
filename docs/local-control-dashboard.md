@@ -29,7 +29,13 @@ The workload selector is model-aware. `executionMode` and `rateMultiplier` apply
 
 ## Async and live modes
 
-**Async** is the default. Starting a run immediately returns its ID and the server continues processing if the browser tab is closed. The browser remembers the latest run ID and reconnects when reopened. The dashboard process must remain running; restart recovery is a later milestone.
+**Async** is the default. Starting a run immediately returns its ID and the server continues processing if the browser tab is closed. The browser remembers the latest run ID and reconnects when reopened. Completed runs survive dashboard restarts through atomic file snapshots; an active run interrupted by a process restart is recovered as interrupted and requires provider-side command inspection before retrying.
+
+## Persistence and recovery
+
+The wizard saves a versioned draft in browser `localStorage`. A page refresh restores profiles by name, regions, selected destinations, workload values, execution mode, and the current wizard step after validating them against newly discovered resources. Search text, credentials, and the dataset-write authorization checkbox are never persisted. **Reset configuration** removes the saved draft without deleting run evidence.
+
+Each local or cloud execution also writes an atomic `.dashboard-state.json` snapshot inside `.kvs/runs/<run-id>/` or `.kvs/cloud-runs/<run-id>/`. Completed runs and downloadable packages are restored after a dashboard restart without SQLite or another service. If the process stopped during an active run, the recovered state is marked failed/interrupted rather than silently resuming mutable orchestration; provider-side command status must be inspected before retrying. The original evidence and command control files remain available for that reconciliation.
 
 **Live** uses the same immutable run configuration but refreshes more frequently. It displays per-target accounting, throughput, in-flight requests, latest latency, rolling P95, and a selectable timeline for AWS, ADB, OCI NoSQL, and offered load. Live metrics are provisional until the evidence is finalized.
 

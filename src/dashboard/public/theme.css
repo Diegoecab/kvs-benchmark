@@ -130,6 +130,7 @@ button:active:not(:disabled) { transform: translateY(1px); }
 .primary, .button-link { background: var(--accent-blue); }
 .secondary { background: #e9edf3; color: #26384f; }
 .secondary.is-loading { display: inline-flex; align-items: center; justify-content: center; gap: 9px; cursor: progress; opacity: 1; }
+.header-state{display:grid;justify-items:end;gap:.55rem}.draft-state{display:flex;align-items:center;gap:.65rem;color:#dbe5f2;font-size:.75rem}.draft-state button{min-height:30px;padding:.3rem .6rem;border:1px solid rgba(255,255,255,.28);border-radius:6px;background:rgba(255,255,255,.08);color:#fff;font-size:.72rem}.draft-state button:hover{background:rgba(255,255,255,.16)}@media(max-width:700px){.header-state{justify-items:start}.draft-state{align-items:flex-start;flex-direction:column}}
 .secondary.is-loading::before { width: 14px; height: 14px; border: 2px solid rgba(38, 56, 79, .25); border-top-color: currentColor; border-radius: 50%; content: ""; animation: discovery-spin .75s linear infinite; }
 @keyframes discovery-spin { to { transform: rotate(360deg); } }
 
