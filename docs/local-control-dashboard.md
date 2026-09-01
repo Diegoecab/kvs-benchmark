@@ -11,6 +11,8 @@ Open `http://127.0.0.1:4177`. The service binds only to loopback.
 
 The commands are portable across Windows, macOS, and Linux. Cloud execution additionally requires `aws` and `oci` in `PATH` plus configured AWS/OCI profiles. AWS runners use Systems Manager and S3. OCI runners use Compute Run Command and Object Storage through instance principals. SSH, SCP, private keys, and public runner IPs are not prerequisites.
 
+Before the first cloud run, complete the [cloud execution prerequisites](cloud-prerequisites.md). In particular, OCI uses separate operator and runner identities: an administrator profile may create a Run Command while the VM still cannot retrieve it unless its dynamic group has `instance-agent-command-execution-family` access.
+
 The five-step wizard covers:
 
 1. Existing-infrastructure or separate-repository managed-infrastructure intent. Managed deployment is not enabled in the current milestone.

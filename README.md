@@ -12,7 +12,7 @@ The harness defines its own versioned methodology for deterministic open-loop sc
 
 `v0.1` provides validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop and fixed-concurrency closed-loop execution, synchronized Phase 1 capacity transitions, concurrency/client-health telemetry, HTML evidence packaging, and offline tests. Cloud provisioning remains outside this repository.
 
-The optional local control dashboard is documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md). It discovers local AWS/OCI profile names, builds a validated run matrix, exports a reviewable run specification, and can execute a fixed two-second local mock smoke test with persisted evidence. Cloud execution and infrastructure management remain disabled.
+The optional local control dashboard is documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md). It discovers local AWS/OCI profile names, builds a validated run matrix, exports a reviewable run specification, executes local functional tests, and remotely runs benchmarks on pre-existing regional AWS/OCI runners. Infrastructure provisioning remains outside this repository.
 
 The harness also loads and certifies the canonical dataset in pre-existing, dedicated benchmark tables. It does not provision cloud infrastructure or create tables.
 
@@ -63,7 +63,7 @@ Then open `http://127.0.0.1:4177` and follow the five-step wizard. The command i
 
 The local functional test is safe and does not contact AWS or OCI. It runs a two-second in-memory workload through the real scheduler, metrics, report, and packaging path. When it reaches `COMPLETE`, select **Download benchmark output (.zip)**. The ZIP contains the standalone HTML report, operation and telemetry evidence, final summary, effective configuration, and SHA-256 manifest. Evidence is also written under `.kvs/runs/<run-id>/`.
 
-For cloud execution against existing runners, install the AWS CLI and OCI CLI before starting the dashboard. AWS uses Systems Manager plus S3; OCI uses Compute Run Command plus Object Storage. No SSH client, SCP, private key, or public runner IP is required. Complete behavior and limitations are documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md).
+For cloud execution against existing runners, install the AWS CLI and OCI CLI before starting the dashboard. AWS uses Systems Manager plus S3; OCI uses Compute Run Command plus Object Storage. No SSH client, SCP, private key, or public runner IP is required. Complete the [cloud execution prerequisites](docs/cloud-prerequisites.md), then follow the behavior documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md).
 
 ## Reproducibility contract
 

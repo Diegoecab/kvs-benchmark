@@ -2,6 +2,8 @@
 
 ## One-time prerequisites
 
+The complete IAM, runner, networking, database, and evidence-store contract is in [cloud-execution prerequisites](cloud-prerequisites.md). Complete that checklist before using the dashboard or CLI against cloud targets.
+
 1. Create three dedicated, empty benchmark tables outside this repository.
 2. Provision the capacity declared by the selected workload profile and disable configurable autoscaling.
 3. Place one adequately sized container host in `us-east-1` and the OCI hosts in `us-ashburn-1`; synchronize host clocks.
