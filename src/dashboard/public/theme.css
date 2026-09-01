@@ -114,9 +114,16 @@ select[size] { min-height: 36px; }
 .destination-chip button { min-width: 28px; min-height: 28px; padding: 2px; border-radius: 50%; background: #eef1f5; color: var(--text-secondary); font-size: 18px; }
 .empty-selection { margin: 0; color: var(--text-secondary); font-size: 12px; }
 .resource-detail { padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: #f8f9fb; }
+.resource-detail.provider-aws { border-top: 3px solid #ff9900; }
+.resource-detail.provider-adb, .resource-detail.provider-ndcs { border-top: 3px solid #c74634; }
 .resource-detail-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
 .resource-detail-heading button { flex: 0 0 auto; min-width: 28px; min-height: 28px; padding: 2px; border-radius: 50%; background: #eef1f5; color: var(--text-secondary); font-size: 18px; }
-.resource-detail h3 { margin: 0 0 4px; overflow-wrap: anywhere; }
+.resource-detail h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; overflow-wrap: anywhere; }
+.provider-mark { display: inline-flex; flex: 0 0 auto; width: 36px; height: 24px; align-items: center; justify-content: center; }
+.provider-mark svg { width: 100%; height: 100%; }
+.provider-mark-aws text { fill: #1a1f2b; font-family: Arial, sans-serif; font-size: 17px; font-weight: 700; letter-spacing: -.8px; }
+.provider-mark-aws path { fill: none; stroke: #ff9900; stroke-linecap: round; stroke-width: 2.5; }
+.provider-mark-oracle rect { fill: none; stroke: #c74634; stroke-width: 5; }
 .resource-detail > p { margin: 0 0 10px; color: var(--text-secondary); font-size: 10px; }
 .resource-detail dl { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; margin: 0; }
 .resource-detail dt { color: var(--text-secondary); font-size: 10px; }

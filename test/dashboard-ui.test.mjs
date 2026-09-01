@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const html = fs.readFileSync(path.join(root, "src", "dashboard", "public", "index.html"), "utf8");
 const app = fs.readFileSync(path.join(root, "src", "dashboard", "public", "app.js"), "utf8");
 const theme = fs.readFileSync(path.join(root, "src", "dashboard", "public", "theme.css"), "utf8");
+const pipeline = fs.readFileSync(path.join(root, "src", "dashboard", "public", "pipeline.css"), "utf8");
 
 test("dashboard exposes a five-step wizard with contextual workload help", () => {
   assert.equal((html.match(/class="wizard-panel"/g) || []).length, 5);
@@ -37,6 +38,8 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /Provisional performance timeline/); assert.match(app, /function renderLiveCharts/);
   assert.match(html, /id="execution-log"/); assert.match(html, /id="pause-log"/); assert.match(html, /id="copy-log"/); assert.match(html, /id="clear-log"/);
   assert.match(app, /function renderExecutionLog/); assert.match(app, /class="pipeline-track"/); assert.match(app, /aria-valuenow/); assert.match(app, /run-light/);
+  assert.match(pipeline, /transform:scaleX\(var\(--pipeline-progress,0\)\)/);
+  assert.match(pipeline, /\.kvs-run-log-line\{[^}]*background:transparent!important/);
   assert.match(html, /id="draft-status"/); assert.match(html, /id="reset-draft"/); assert.match(app, /kvs-dashboard-draft-v1/); assert.match(app, /function saveDraft/); assert.match(app, /async function restoreDraft/);
   assert.match(app, /function syncLiveChartVisibility/);
   assert.match(app, /Waiting for the workload stage and the first runner sample/);
@@ -95,12 +98,14 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.doesNotMatch(html, /id="destination-details"/);
   assert.match(app, /function renderDestinationDetails/);
   assert.match(app, /void autoDiscoverActiveTarget\(\)/);
-  assert.match(app, /probeAdbTables: !automatic/);
+  assert.match(app, /probeAdbTables: true/);
   assert.match(app, /Live provider metadata/);
   assert.match(app, /Selected destination · not live-verified/);
   assert.match(app, /Autoscaling/);
   for (const label of ["Status", "Capacity mode", "Read capacity", "Write capacity", "Current table size", "Storage limit", "Item count"]) assert.match(app, new RegExp(`\\["${label}"`));
-  assert.match(app, /function addDestination/);
+  assert.match(app, /async function addDestination/);
+  assert.match(app, /function providerMark/);
+  assert.match(app, /provider-mark-aws/);
   assert.match(app, /data-remove-destination/);
   assert.doesNotMatch(html, /id="refresh"/);
   assert.doesNotMatch(html, /Refresh profiles/i);
