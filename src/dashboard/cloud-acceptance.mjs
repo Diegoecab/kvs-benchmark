@@ -35,6 +35,9 @@ function validate(input) {
     mode: ["async", "live"].includes(input.execution?.mode) ? input.execution.mode : "async",
     image: safe(input.imageDigest || defaultImage, /^[a-z0-9./_-]+@sha256:[a-f0-9]{64}$/i, "Runner image digest"),
   };
+  const requestedLead = input.execution?.t0LeadSeconds;
+  if (requestedLead != null && (!Number.isInteger(Number(requestedLead)) || Number(requestedLead) < 30 || Number(requestedLead) > 3600)) throw new Error("T0 lead time must be an integer between 30 and 3600 seconds");
+  result.t0LeadSeconds = requestedLead == null ? (enabled.some(name => name === "adb" || name === "ndcs") ? 480 : 120) : Number(requestedLead);
   if (enabled.includes("aws")) Object.assign(result, { awsProfile: safe(target.aws.profile, /^[A-Za-z0-9_.-]+$/, "AWS profile"), awsRegion: safe(target.aws.region, /^[a-z]{2}-[a-z]+-\d$/, "AWS region"), awsTable: safe(target.aws.resource, /^[A-Za-z0-9_.-]+$/, "AWS table"), awsRunner: safe(target.aws.runnerId, /^i-[a-f0-9]+$/, "AWS runner"), bucket: safe(input.artifactBucket, /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, "Artifact bucket") });
   if (enabled.includes("adb")) Object.assign(result, { adbOciProfile: safe(target.adb.profile, /^[A-Za-z0-9_.-]+$/, "ADB OCI profile"), adbOciRegion: safe(target.adb.region, /^[a-z]{2}-[a-z]+-\d$/, "ADB OCI region"), adbTable: safe(target.adb.resource, /^[A-Za-z0-9_.-]+$/, "ADB table"), adbRunner: safe(target.adb.runnerId, /^ocid1\.instance\./, "ADB runner"), adbRunnerCompartment: safe(target.adb.runnerCompartmentId, /^ocid1\.(compartment|tenancy)\./, "ADB runner compartment"), adbBucket: safe(target.adb.evidenceBucket, /^[A-Za-z0-9_.-]+$/, "ADB evidence bucket"), adbDatabaseId: target.adb.databaseId ? safe(target.adb.databaseId, /^ocid1\.autonomousdatabase\./, "Autonomous Database") : null });
   if (enabled.includes("ndcs")) {
@@ -111,7 +114,7 @@ export class CliCloudAdapter {
     const control = path.join(spec.localOutput, "control"); fs.mkdirSync(control, { recursive: true });
     const safeAction = action.replaceAll("/", "-"), script = remoteScript(spec, target, action, output, startAt, session);
     const instanceId = target === "adb" ? spec.adbRunner : spec.ndcsRunner, compartmentId = target === "adb" ? spec.adbRunnerCompartment : spec.ndcsRunnerCompartment, profile = target === "adb" ? spec.adbOciProfile : spec.ndcsOciProfile, region = target === "adb" ? spec.adbOciRegion : spec.ndcsOciRegion;
-    return executeOciRunCommand({ executeCommand: this.execute, profile, region, compartmentId, instanceId, script, displayName: `${spec.runId}-${target}-${safeAction}`, controlDirectory: control, timeoutSeconds: action === "preflight" ? 60 : 3600, deliveryTimeoutSeconds: 300 });
+    return executeOciRunCommand({ executeCommand: this.execute, profile, region, compartmentId, instanceId, script, displayName: `${spec.runId}-${target}-${safeAction}`, controlDirectory: control, timeoutSeconds: action === "preflight" ? 60 : 3600, deliveryTimeoutSeconds: 360 });
   }
   async preflight(spec) {
     const tasks = {};
@@ -202,6 +205,14 @@ export class CloudAcceptanceRuns {
     this.runs.set(id, state); this.persist(state); void this.execute(state); return visible(state);
   }
   get(id) { const state = this.runs.get(id); if (!state) throw new Error("Cloud run not found"); return visible(state); }
+  active() {
+    const state = [...this.runs.values()].find(run => ["queued", "running"].includes(run.status));
+    return state ? visible(state) : null;
+  }
+  latest() {
+    const state = [...this.runs.values()].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
+    return state ? visible(state) : null;
+  }
   download(id) { const state = this.runs.get(id); if (!state?.archiveFile) throw new Error("Cloud benchmark output is not ready"); return state.archiveFile; }
   async step(state, name, task) {
     const stage = state.stages.find(item => item.name === name); stage.status = "running"; stage.startedAt = new Date().toISOString();
@@ -217,11 +228,11 @@ export class CloudAcceptanceRuns {
       await this.step(state, "dataset-preload", async () => { state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "preloading"])); const value = await this.adapter.stage(spec, "preload"); state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "preloaded"])); return value.map(item => item.stdout?.slice(-120)); });
       await this.step(state, "dataset-certification", async () => { state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "certifying"])); await this.adapter.stage(spec, "certify"); await this.adapter.collect(spec, "certify"); state.certificates = Object.fromEntries(spec.enabled.map(target => [target, readJson(path.join(state.output, "evidence", "certify", target, "dataset-certificate.json"))])); state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "certified"])); return Object.fromEntries(Object.entries(state.certificates).map(([key, value]) => [key, value.observedSha256])); });
       await this.step(state, "dataset-hash-match", () => { const hashes = Object.values(state.certificates).map(value => value.observedSha256); if (new Set(hashes).size !== 1 || Object.values(state.certificates).some(value => !value.passed)) throw new Error("Dataset certificates do not match"); return hashes[0]; });
-      await this.step(state, "t0-scheduled", () => `${spec.matrix.length} synchronized session T0 value(s) will be assigned immediately before launch`);
+      await this.step(state, "t0-scheduled", () => `${spec.matrix.length} synchronized session T0 value(s) will use a ${spec.t0LeadSeconds}s delivery window`);
       await this.step(state, "workload", async () => {
         for (const session of spec.matrix) {
           state.currentSession = { id: session.id, configFile: session.configFile, repetition: session.repetition, index: state.sessionResults.length + 1, total: spec.matrix.length, offeredOperationsPerSecond: session.averageScheduledOperationsPerSecond, durationSeconds: session.durationSeconds };
-          state.sharedStartAt = new Date(Math.ceil((Date.now() + 120_000) / 10_000) * 10_000).toISOString();
+          state.sharedStartAt = new Date(Math.ceil((Date.now() + spec.t0LeadSeconds * 1000) / 10_000) * 10_000).toISOString();
           appendLog(state, { stage: "workload", message: `Session ${state.currentSession.index}/${state.currentSession.total} ${session.id}; T0 ${state.sharedStartAt}; ${session.durationSeconds}s; ${session.averageScheduledOperationsPerSecond} offered ops/s` });
           state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "running"]));
           for (const target of spec.enabled) appendLog(state, { stage: "workload", target, message: "Remote workload submitted" });

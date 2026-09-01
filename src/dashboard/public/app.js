@@ -21,7 +21,7 @@ let automaticDiscoveryPending = false;
 const draftKey = "kvs-dashboard-draft-v1";
 const incompatibleRunnerKey = "kvs-dashboard-incompatible-runners-v1";
 const incompatibleRunners = new Set((() => { try { const values = JSON.parse(localStorage.getItem(incompatibleRunnerKey)); return Array.isArray(values) ? values : []; } catch { return []; } })());
-const draftFieldIds = ["infra-repo", "infra-ref", "infra-workspace", "destination-cloud", "destination-product", "aws-profile", "aws-region", "aws-runner", "aws-table", "aws-table-manual", "artifact-bucket", "adb-profile", "adb-region", "adb-compartment", "adb-database", "adb-runner", "adb-table", "adb-table-manual", "adb-artifact-bucket", "ndcs-profile", "ndcs-region", "ndcs-compartment", "ndcs-runner", "ndcs-table", "ndcs-table-manual", "ndcs-artifact-bucket", "image-digest"];
+const draftFieldIds = ["infra-repo", "infra-ref", "infra-workspace", "destination-cloud", "destination-product", "aws-profile", "aws-region", "aws-runner", "aws-table", "aws-table-manual", "artifact-bucket", "adb-profile", "adb-region", "adb-compartment", "adb-database", "adb-runner", "adb-table", "adb-table-manual", "adb-artifact-bucket", "ndcs-profile", "ndcs-region", "ndcs-compartment", "ndcs-runner", "ndcs-table", "ndcs-table-manual", "ndcs-artifact-bucket", "image-digest", "t0-lead-seconds"];
 let draftSaveTimer = null;
 let restoringDraft = false;
 
@@ -101,7 +101,17 @@ async function load() {
   $("warnings").innerHTML = bootstrap.profiles.warnings.map(item => `<div class="callout warning">${escapeHtml(item)}</div>`).join("");
   $("connection").textContent = `${bootstrap.profiles.aws.length} AWS | ${bootstrap.profiles.oci.length} OCI profiles`; $("connection").className = "status ok";
   await restoreDraft(draft);
-  const savedRun = localStorage.getItem("kvs-dashboard-run-id"); if (savedRun) void monitorRun(savedRun, "async", true);
+  const savedRun = localStorage.getItem("kvs-dashboard-run-id");
+  const activeResponse = await fetch("/api/runs/active", { cache: "no-store" });
+  const activeResult = activeResponse.ok ? await activeResponse.json() : { active: null };
+  const restoredRun = activeResult.active || (activeResult.latest?.id === savedRun ? activeResult.latest : null) || activeResult.latest;
+  const runId = restoredRun?.id || savedRun;
+  if (runId) {
+    localStorage.setItem("kvs-dashboard-run-id", runId);
+    showStep(5);
+    if (restoredRun) showSmoke(restoredRun);
+    void monitorRun(runId, restoredRun?.mode || "async", true);
+  }
 }
 
 function runMode() { return document.querySelector('input[name="run-mode"]:checked').value; }
@@ -175,7 +185,7 @@ function specification() {
     else item.fixedConcurrency = Number(row.querySelector(".preset-concurrency").value);
     return [row.dataset.config, item];
   }));
-  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: selectedTargets.has("aws"), profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: selectedTargets.has("adb"), profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerCompartmentId: adbRunner.compartmentId, compartmentId: value("adb-compartment"), evidenceBucket: value("adb-artifact-bucket") }, ndcs: { enabled: selectedTargets.has("ndcs"), profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerCompartmentId: ndcsRunner.compartmentId, compartmentId: value("ndcs-compartment"), evidenceBucket: value("ndcs-artifact-bucket") } }, configs, presetRepetitions, presetOverrides, overrides: {}, execution: { mode: runMode(), mutableParameters: false }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
+  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: selectedTargets.has("aws"), profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: selectedTargets.has("adb"), profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerCompartmentId: adbRunner.compartmentId, compartmentId: value("adb-compartment"), evidenceBucket: value("adb-artifact-bucket") }, ndcs: { enabled: selectedTargets.has("ndcs"), profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerCompartmentId: ndcsRunner.compartmentId, compartmentId: value("ndcs-compartment"), evidenceBucket: value("ndcs-artifact-bucket") } }, configs, presetRepetitions, presetOverrides, overrides: {}, execution: { mode: runMode(), mutableParameters: false, t0LeadSeconds: optionalNumber("t0-lead-seconds") }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
 }
 
 function runnerOptions(select, values, preferredPattern) {
@@ -450,7 +460,7 @@ async function startSmoke() {
 
 async function startCloud() {
   $("start-smoke").disabled = true; $("start-benchmark").disabled = true; $("download-output").classList.add("hidden"); $("smoke-status").className = "callout"; $("smoke-status").textContent = "Submitting cloud acceptance pipeline...";
-  try { const spec = specification(); const response = await fetch("/api/cloud-acceptance", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(spec) }); const run = await response.json(); if (!response.ok) throw new Error(run.error || `Start failed (${response.status})`); localStorage.setItem("kvs-dashboard-run-id", run.id); showSmoke(run); await monitorRun(run.id, runMode()); }
+  try { const spec = specification(); const response = await fetch("/api/cloud-acceptance", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(spec) }); const run = await response.json(); if (response.status === 409 && run.active) { localStorage.setItem("kvs-dashboard-run-id", run.active.id); showStep(5); showSmoke(run.active); await monitorRun(run.active.id, run.active.mode || "async"); return; } if (!response.ok) throw new Error(run.error || `Start failed (${response.status})`); localStorage.setItem("kvs-dashboard-run-id", run.id); showSmoke(run); await monitorRun(run.id, runMode()); }
   catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("start-smoke").disabled = false; $("start-benchmark").disabled = false; }
 }
 

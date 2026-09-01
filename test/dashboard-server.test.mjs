@@ -6,7 +6,8 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   const smoke = { id: "smoke-test", mode: "async", status: "complete", progress: { scheduled: 20, accounted: 20, completed: 20, failed: 0 }, summary: { harnessPassed: true } };
   const cloud = { id: "cloud-test", kind: "cloud-acceptance", status: "queued", stages: [] };
   const localSmokeRuns = { start: options => { assert.equal(options.mode, "async"); return smoke; }, get: id => { if (id !== smoke.id) throw new Error("not local"); return smoke; } };
-  const cloudRuns = { start: options => { assert.equal(options.writeAuthorization, true); return cloud; }, get: id => { assert.equal(id, cloud.id); return cloud; } };
+  let activeCloud = null;
+  const cloudRuns = { start: options => { assert.equal(options.writeAuthorization, true); activeCloud = cloud; return cloud; }, get: id => { assert.equal(id, cloud.id); return cloud; }, active: () => activeCloud, latest: () => cloud };
   const runnerDiscovery = async options => { assert.equal(options.awsProfile, "dynamodb_poc"); return { aws: [], oci: [], artifactBuckets: [] }; };
   const destinationDiscovery = async options => { assert.deepEqual(options, {}); return { awsTables: ["table"], compartments: [] }; };
   const { server, token } = createDashboardServer({ profileDiscovery: async () => ({ aws: ["dynamodb_poc"], oci: ["PITWALL_API"], warnings: [], sources: {} }), runnerDiscovery, destinationDiscovery, localSmokeRuns, cloudRuns });
@@ -35,5 +36,7 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   const destinations = await fetch(`${origin}/api/discover-destinations`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: "{}" }); assert.equal(destinations.status, 200); assert.deepEqual((await destinations.json()).awsTables, ["table"]);
   const startedCloud = await fetch(`${origin}/api/cloud-acceptance`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ writeAuthorization: true }) });
   assert.equal(startedCloud.status, 202); assert.equal((await startedCloud.json()).id, cloud.id);
+  const duplicateCloud = await fetch(`${origin}/api/cloud-acceptance`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ writeAuthorization: true }) }); assert.equal(duplicateCloud.status, 409); assert.equal((await duplicateCloud.json()).active.id, cloud.id);
+  const activeRun = await fetch(`${origin}/api/runs/active`).then(response => response.json()); assert.equal(activeRun.active.id, cloud.id); assert.equal(activeRun.latest.id, cloud.id);
   const cloudStatus = await fetch(`${origin}/api/runs/${cloud.id}`).then(response => response.json()); assert.equal(cloudStatus.kind, "cloud-acceptance");
 });

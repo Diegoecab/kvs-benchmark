@@ -72,6 +72,16 @@ export class LocalSmokeRuns {
     return visible(state);
   }
 
+  active() {
+    const state = [...this.runs.values()].find(run => ["queued", "running"].includes(run.status));
+    return state ? visible(state) : null;
+  }
+
+  latest() {
+    const state = [...this.runs.values()].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
+    return state ? visible(state) : null;
+  }
+
   async execute(state, loaded) {
     let provider;
     try {

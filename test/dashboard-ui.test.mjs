@@ -51,6 +51,8 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
 test("dashboard defaults to async and exposes live progress and package download", () => {
   assert.match(html, /name="run-mode" value="async" checked/);
   assert.match(html, /name="run-mode" value="live"/);
+  assert.match(html, /id="t0-lead-seconds"/);
+  assert.match(app, /t0LeadSeconds: optionalNumber\("t0-lead-seconds"\)/);
   assert.match(html, /Download benchmark output \(\.zip\)/);
   assert.match(app, /mode === "live" \? 200 : 1000/);
   assert.match(app, /localStorage\.setItem\("kvs-dashboard-run-id"/);

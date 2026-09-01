@@ -36,6 +36,7 @@ test("cloud acceptance exposes every preflight, dataset, synchronization, eviden
   assert.equal(current.status, "complete"); assert.ok(current.stages.every(stage => stage.status === "complete")); assert.equal(current.certificates.aws.observedSha256, hash); assert.equal(current.sessionResults.length, 1); assert.ok(fs.existsSync(runs.download(started.id)));
   assert.ok(current.logs.length >= 20); assert.ok(current.logs.some(item => item.stage === "runner-readiness" && item.level === "success")); assert.ok(current.logs.some(item => item.stage === "workload" && item.target === "aws")); assert.equal(current.logs.at(-1).message, "Benchmark pipeline completed");
   assert.ok(fs.existsSync(path.join(root, started.id, "pipeline-log.ndjson"))); assert.match(fs.readFileSync(path.join(root, started.id, "pipeline-log.ndjson"), "utf8"), /Benchmark pipeline completed/);
+  assert.ok(current.logs.some(item => item.stage === "t0-scheduled" && /480s delivery window/.test(item.message)));
   const restored = new CloudAcceptanceRuns({ outputRoot: root, adapter }); const recovered = restored.get(started.id); assert.equal(recovered.status, "complete"); assert.equal(recovered.sessionResults.length, 1); assert.ok(restored.download(started.id));
 });
 

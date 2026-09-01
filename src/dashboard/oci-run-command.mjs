@@ -35,6 +35,11 @@ export async function executeOciRunCommand({ executeCommand, profile, region, co
     if (Date.now() >= deadline) break;
     await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
   }
+  let cancellationRequested = false;
+  try {
+    await executeCommand("oci", ["instance-agent", "command", "cancel", "--profile", profile, "--region", region, "--command-id", commandId, "--force"], { timeout: cliTimeoutMs });
+    cancellationRequested = true;
+  } catch {}
   const hint = lastStatus === "ACCEPTED" ? `; it was not delivered within ${deliveryTimeoutSeconds}s. Check the Compute Instance Run Command plugin, dynamic-group policy, TCP/443 egress, and pending-command backlog` : "";
-  throw new Error(`OCI Run Command ${displayName} timed out in ${lastStatus}${hint}`);
+  throw new Error(`OCI Run Command ${displayName} timed out in ${lastStatus}${hint}${cancellationRequested ? "; cancellation requested to prevent queue buildup" : ""}`);
 }
