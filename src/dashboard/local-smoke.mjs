@@ -23,6 +23,7 @@ function visible(state) {
     completedAt: state.completedAt || null,
     output: state.outputRelative,
     progress: state.progress,
+    logs: state.logs || [],
     summary: state.summary || null,
     error: state.error || null,
     downloadUrl: state.archiveFile ? `/api/runs/${encodeURIComponent(state.id)}/download` : null,
@@ -51,6 +52,7 @@ export class LocalSmokeRuns {
       output,
       outputRelative: path.relative(repositoryRoot, output).replaceAll("\\", "/"),
       progress: { scheduled: scheduledOperationCount(loaded.config), accounted: 0, completed: 0, failed: 0, schedulerDrops: 0 },
+      logs: [{ at: new Date().toISOString(), level: "info", stage: "local-smoke", target: "mock", message: "Local functional test queued" }],
     };
     this.runs.set(id, state);
     void this.execute(state, loaded);
@@ -69,6 +71,7 @@ export class LocalSmokeRuns {
       fs.mkdirSync(state.output, { recursive: true });
       state.status = "running";
       state.startedAt = new Date().toISOString();
+      state.logs.push({ at: state.startedAt, level: "info", stage: "local-smoke", target: "mock", message: "Mock-provider workload started" });
       provider = await createMockProvider({ config: loaded.config });
       const summary = await runOpenLoop({
         config: loaded.config,
@@ -83,11 +86,13 @@ export class LocalSmokeRuns {
       state.summary = summary;
       state.status = summary.harnessPassed ? "complete" : "failed";
       state.completedAt = new Date().toISOString();
+      state.logs.push({ at: state.completedAt, level: state.status === "complete" ? "success" : "error", stage: "local-smoke", target: "mock", message: `${summary.completed}/${summary.scheduled} operations completed; ${summary.failed} failed` });
       if (state.status === "complete") Object.assign(state, finalizeLocalArtifact(state));
     } catch (error) {
       state.status = "failed";
       state.error = error.message;
       state.completedAt = new Date().toISOString();
+      state.logs.push({ at: state.completedAt, level: "error", stage: "local-smoke", target: "mock", message: error.message });
     } finally {
       await provider?.close();
     }

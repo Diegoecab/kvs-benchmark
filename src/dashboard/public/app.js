@@ -11,6 +11,10 @@ let discovered = null;
 let destinations = null;
 let liveChartSession = null;
 let liveChartSamples = [];
+let terminalRunId = null;
+let terminalLogs = [];
+let terminalClearedCount = 0;
+let terminalPaused = false;
 const selectedTargets = new Set();
 let automaticDiscovery = null;
 let automaticDiscoveryPending = false;
@@ -338,16 +342,35 @@ function captureLiveSample(run) {
   renderLiveCharts();
 }
 
+function fallbackLogs(run) {
+  return (run.stages || []).filter(stage => stage.status !== "pending").map(stage => ({ at: stage.completedAt || stage.startedAt || run.startedAt || run.createdAt, level: stage.status === "failed" ? "error" : stage.status === "complete" ? "success" : "info", stage: stage.name, target: "control", message: stage.detail || (stage.status === "running" ? "Stage running" : stage.status) }));
+}
+function terminalText(logs) {
+  return logs.map(item => `${item.at || "-"} [${String(item.level || "info").toUpperCase()}] [${item.stage || "pipeline"}] [${item.target || "control"}] ${item.message || ""}`).join("\n");
+}
+function renderExecutionLog(run) {
+  if (terminalRunId !== run.id) { terminalRunId = run.id; terminalClearedCount = 0; terminalPaused = false; $("pause-log").textContent = "Pause"; $("pause-log").setAttribute("aria-pressed", "false"); }
+  terminalLogs = Array.isArray(run.logs) && run.logs.length ? run.logs : fallbackLogs(run);
+  if (terminalPaused) return;
+  const logs = terminalLogs.slice(terminalClearedCount), view = $("execution-log");
+  if (!logs.length) view.innerHTML = '<div class="terminal-empty"><span>$</span> Waiting for the next pipeline event...</div>';
+  else view.innerHTML = logs.map(item => { const timestamp = item.at ? new Date(item.at).toISOString().slice(11, 23) : "--:--:--.---"; return `<div class="terminal-row ${escapeHtml(item.level || "info")}"><span class="terminal-time">${escapeHtml(timestamp)}</span><span class="terminal-level">${escapeHtml(item.level || "info")}</span><span class="terminal-stage">${escapeHtml(item.stage || "pipeline")}</span><span class="terminal-target">${escapeHtml(item.target || "control")}</span><span class="terminal-message">${escapeHtml(item.message || "")}</span></div>`; }).join("");
+  if ($("log-autoscroll").checked) view.scrollTop = view.scrollHeight;
+}
+
 function showSmoke(run) {
   const progress = run.progress || {}; const terminal = ["complete", "failed"].includes(run.status); const latency = run.summary?.successfulServiceLatencyMs || {};
   const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", session = run.currentSession;
   const accounting = cloud ? ` | ${session ? `session ${escapeHtml(session.id)} (${session.index}/${session.total}) | ` : ""}shared T0 ${escapeHtml(run.sharedStartAt || "pending")}` : ` | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted`;
-  $("smoke-status").className = `callout${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
-  $("pipeline").innerHTML = (run.stages || []).map(stage => `<div class="pipeline-stage ${escapeHtml(stage.status)}"><span>${escapeHtml(stage.status)}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b><small>${escapeHtml(stage.detail || "Waiting")}</small></div>`).join("");
+  const running = ["queued", "running"].includes(run.status), statusIndicator = running ? '<span class="run-light" aria-hidden="true"></span>' : "";
+  $("smoke-status").className = `callout run-status ${run.status}${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `${statusIndicator}<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
+  const stages = run.stages || [], processed = stages.filter(stage => ["complete", "failed"].includes(stage.status)).length, percentage = stages.length ? Math.round(processed * 100 / stages.length) : 0, activeStage = stages.find(stage => stage.status === "running"), failedStage = stages.find(stage => stage.status === "failed"), progressLabel = failedStage ? `Stopped at ${failedStage.name.replaceAll("-", " ")}` : activeStage ? `Running ${activeStage.name.replaceAll("-", " ")}` : percentage === 100 ? "All pipeline stages completed" : "Waiting to start";
+  $("pipeline").innerHTML = stages.length ? `<div class="pipeline-summary"><div class="pipeline-progress-heading"><div><b>${percentage}%</b><span>${escapeHtml(progressLabel)}</span></div><small>${processed} of ${stages.length} steps processed</small></div><div class="pipeline-track" role="progressbar" aria-label="Benchmark pipeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="width:${percentage}%"></span></div><ol class="pipeline-steps">${stages.map((stage, index) => { const symbol = stage.status === "complete" ? "✓" : stage.status === "failed" ? "!" : stage.status === "running" ? "●" : String(index + 1); return `<li class="${escapeHtml(stage.status)}" title="${escapeHtml(stage.detail || stage.status)}"><span>${symbol}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b></li>`; }).join("")}</ol></div>` : "";
   const targetMetrics = run.targetMetrics || {};
   const showLiveChart = cloud && run.mode === "live"; $("live-chart-panel").classList.toggle("hidden", !showLiveChart); if (showLiveChart) { captureLiveSample(run); if (!session) $("live-chart-caption").textContent = `Waiting for workload · current run status: ${run.status}`; renderLiveCharts(); }
   if (cloud && Object.keys(targetMetrics).length) $("live-stats").innerHTML = Object.entries(targetMetrics).map(([target, metric]) => `<div class="target-live provider-${escapeHtml(target)}"><h4>${escapeHtml(target.toUpperCase())}${metric.provisional ? " · LIVE PREVIEW" : " · FINAL"}</h4><div class="stats"><div class="stat"><span>Completed</span><b>${number(metric.completed)}</b></div><div class="stat"><span>Failed</span><b>${number(metric.failed)}</b></div><div class="stat"><span>Ops/s</span><b>${number(metric.operationsPerSecond)}</b></div><div class="stat"><span>In flight</span><b>${number(metric.inFlight)}</b></div><div class="stat"><span>Latest latency ms</span><b>${number(metric.latestLatencyMs)}</b></div><div class="stat"><span>${metric.provisional ? "Rolling P95 ms" : "Final P95 ms"}</span><b>${number(metric.rollingP95Ms ?? metric.p95)}</b></div><div class="stat"><span>Final P99 ms</span><b>${number(metric.p99)}</b></div><div class="stat"><span>Final max ms</span><b>${number(metric.max)}</b></div></div></div>`).join("");
   else { const cloudCompleted = run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.completed, 0) : null; const values = [["Completed", cloudCompleted ?? progress.completed ?? 0], ["Failed", progress.failed ?? (run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.failed, 0) : 0)], ["Current ops/s", progress.achievedOperationsPerSecond ?? run.summary?.achievedOperationsPerSecond], ["In flight", progress.inFlight ?? 0], ["Latest latency ms", progress.latestLatencyMs], ["Final P95 ms", latency.p95]]; $("live-stats").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join(""); }
+  renderExecutionLog(run);
   $("smoke-detail").textContent = JSON.stringify({ kind: run.kind, mode: run.mode, status: run.status, startedAt: run.startedAt, completedAt: run.completedAt, targetStatus: run.targetStatus, certificates: run.certificates, summaries: run.summaries, evidence: run.output, latestOperation: progress.latestOperation, latestError: progress.latestError }, null, 2);
   $("download-output").classList.toggle("hidden", !run.downloadUrl); if (run.downloadUrl) $("download-output").href = run.downloadUrl;
   $("start-smoke").disabled = !terminal; $("start-benchmark").disabled = !terminal; if (terminal) localStorage.removeItem("kvs-dashboard-run-id");
@@ -392,6 +415,9 @@ for (const context of ["adb", "ndcs"]) for (const suffix of ["profile", "region"
 });
 $("select-recommended").addEventListener("click", () => selectPresets(recommendedPreset)); $("select-all-presets").addEventListener("click", () => selectPresets(() => true)); $("clear-presets").addEventListener("click", () => selectPresets(() => false));
 $("image-digest").addEventListener("input", renderRunnerImage);
+$("pause-log").addEventListener("click", () => { terminalPaused = !terminalPaused; $("pause-log").textContent = terminalPaused ? "Resume" : "Pause"; $("pause-log").setAttribute("aria-pressed", String(terminalPaused)); if (!terminalPaused && terminalRunId) renderExecutionLog({ id: terminalRunId, logs: terminalLogs }); });
+$("clear-log").addEventListener("click", () => { terminalClearedCount = terminalLogs.length; $("execution-log").innerHTML = '<div class="terminal-empty"><span>$</span> View cleared. New events will continue to appear.</div>'; });
+$("copy-log").addEventListener("click", async () => { const button = $("copy-log"); try { await navigator.clipboard.writeText(terminalText(terminalLogs.slice(terminalClearedCount))); button.textContent = "Copied"; } catch { button.textContent = "Copy failed"; } setTimeout(() => { button.textContent = "Copy"; }, 1500); });
 $("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-destinations").addEventListener("click", discoverDestinations);
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
 syncDestinationProducts(); renderDestinationSummary(); syncLiveChartVisibility(); showStep(1); load().catch(showLoadError);

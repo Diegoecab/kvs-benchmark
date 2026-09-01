@@ -35,6 +35,8 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /id="cloud-aws"/); assert.match(html, /id="cloud-oci"/);
   assert.match(html, /No SSH, SCP, private key, or public IP is used/);
   assert.match(html, /Provisional performance timeline/); assert.match(app, /function renderLiveCharts/);
+  assert.match(html, /id="execution-log"/); assert.match(html, /id="pause-log"/); assert.match(html, /id="copy-log"/); assert.match(html, /id="clear-log"/);
+  assert.match(app, /function renderExecutionLog/); assert.match(app, /class="pipeline-track"/); assert.match(app, /aria-valuenow/); assert.match(app, /run-light/);
   assert.match(app, /function syncLiveChartVisibility/);
   assert.match(app, /Waiting for the workload stage and the first runner sample/);
   assert.match(html, /canonical dataset preload and certification/);

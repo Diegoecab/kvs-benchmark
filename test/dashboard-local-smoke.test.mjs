@@ -28,6 +28,8 @@ test("local dashboard smoke run executes the real harness and persists evidence"
   assert.equal(current.status, "complete");
   assert.equal(current.summary.completed, 2);
   assert.equal(current.summary.harnessPassed, true);
+  assert.equal(current.logs[0].message, "Local functional test queued");
+  assert.equal(current.logs.at(-1).level, "success");
   const output = path.join(root, "runs", started.id);
   for (const file of ["operations.ndjson", "telemetry.ndjson", "summary.json", "run-config.json"]) assert.equal(fs.existsSync(path.join(output, file)), true);
   for (const file of ["index.html", "manifest-sha256.json", `${started.id}-benchmark-output.zip`]) assert.equal(fs.existsSync(path.join(output, file)), true);
