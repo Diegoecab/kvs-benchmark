@@ -24,7 +24,7 @@ test("OCI Run Command honors the wall-clock timeout without extra polling attemp
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-run-command-timeout-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const executeCommand = async (_file, args) => args.includes("create") ? "ocid1.instanceagentcommand.test\n" : JSON.stringify({ data: { "lifecycle-state": "ACCEPTED" } });
   const started = Date.now();
-  await assert.rejects(() => executeOciRunCommand({ executeCommand, profile: "TEST", region: "us-ashburn-1", compartmentId: "ocid1.compartment.test", instanceId: "ocid1.instance.test", script: "date -u\n", displayName: "test-timeout", controlDirectory: root, timeoutSeconds: 0.02, pollIntervalMs: 2 }), /dynamic-group policy/);
+  await assert.rejects(() => executeOciRunCommand({ executeCommand, profile: "TEST", region: "us-ashburn-1", compartmentId: "ocid1.compartment.test", instanceId: "ocid1.instance.test", script: "date -u\n", displayName: "test-timeout", controlDirectory: root, timeoutSeconds: 1, deliveryTimeoutSeconds: 0.02, pollIntervalMs: 2 }), /not delivered within 0.02s/);
   assert.ok(Date.now() - started < 250);
 });
 

@@ -104,7 +104,7 @@ export class CliCloudAdapter {
     const control = path.join(spec.localOutput, "control"); fs.mkdirSync(control, { recursive: true });
     const safeAction = action.replaceAll("/", "-"), script = remoteScript(spec, target, action, output, startAt, session);
     const instanceId = target === "adb" ? spec.adbRunner : spec.ndcsRunner, compartmentId = target === "adb" ? spec.adbRunnerCompartment : spec.ndcsRunnerCompartment, profile = target === "adb" ? spec.adbOciProfile : spec.ndcsOciProfile, region = target === "adb" ? spec.adbOciRegion : spec.ndcsOciRegion;
-    return executeOciRunCommand({ executeCommand: this.execute, profile, region, compartmentId, instanceId, script, displayName: `${spec.runId}-${target}-${safeAction}`, controlDirectory: control, timeoutSeconds: action === "preflight" ? 60 : 3600 });
+    return executeOciRunCommand({ executeCommand: this.execute, profile, region, compartmentId, instanceId, script, displayName: `${spec.runId}-${target}-${safeAction}`, controlDirectory: control, timeoutSeconds: action === "preflight" ? 60 : 3600, deliveryTimeoutSeconds: 300 });
   }
   async preflight(spec) {
     const tasks = {};

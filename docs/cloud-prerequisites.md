@@ -61,7 +61,7 @@ Allow dynamic-group '<IDENTITY_DOMAIN>'/'<RUNNER_DYNAMIC_GROUP>' to use instance
 
 Use the tenancy's actual identity-domain name, commonly `Default`. Do not assume that an unqualified legacy dynamic-group name resolves correctly in an identity-domain tenancy.
 
-The **Compute Instance Run Command** Oracle Cloud Agent plugin must be `RUNNING`. OCI documents that a newly added dynamic-group membership can take up to 30 minutes to begin polling. A command that remains `ACCEPTED` has not been picked up by the instance; verify this policy, egress TCP/443, and the agent log before running a workload.
+The **Compute Instance Run Command** Oracle Cloud Agent plugin must be `RUNNING`. OCI documents that a newly added dynamic-group membership can take up to 30 minutes to begin polling. Delivery time and script execution time are separate: the dashboard allows up to 300 seconds for an `ACCEPTED` command to be delivered, then applies the action-specific execution timeout. If delivery exceeds 300 seconds, verify this policy, egress TCP/443, the pending-command backlog, and the agent log before running a workload.
 
 Run Command executes Linux scripts as `ocarun`. Because the benchmark uses the root Podman image store and protected runtime files, configure passwordless administrative execution at instance creation. Oracle's documented sudoers entry is:
 

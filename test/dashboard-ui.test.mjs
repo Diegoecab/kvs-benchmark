@@ -76,6 +76,11 @@ test("dashboard exposes cloud and local test actions with model-aware overrides"
   assert.match(app, /Live provider metadata/);
   assert.match(app, /Recent local evidence · not live-verified/);
   assert.match(app, /Autoscaling/);
+  for (const label of ["Status", "Capacity mode", "Read capacity", "Write capacity", "Current table size", "Storage limit", "Item count"]) assert.match(app, new RegExp(`\\["${label}"`));
+  assert.match(app, /data-action="verify-adb-metadata"/);
+  assert.match(app, /async function verifyAdbMetadata/);
+  assert.match(app, /read-only ListTables \+ DescribeTable probe/);
+  assert.match(app, /Synchronized workload sessions/);
   assert.match(theme, /\.resource-detail/);
 });
 

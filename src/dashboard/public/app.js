@@ -111,19 +111,33 @@ function lookupOptions(select, items, { label = item => item?.name || item, getV
 
 function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) !== "__manual__"; }
 function filterOptions(input) { const select = $(input.dataset.filterFor), query = input.value.trim().toLowerCase(); if (!select) return; for (const option of select.options) option.hidden = Boolean(query) && option.value !== select.value && !option.textContent.toLowerCase().includes(query); }
-function bytes(value) { if (value == null) return "Not exposed"; const units = ["B", "KB", "MB", "GB", "TB"]; let amount = Number(value), unit = 0; while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; } return `${number(amount)} ${units[unit]}`; }
+function bytes(value, fallback = "Not exposed by provider inventory") { if (value == null) return fallback; const units = ["B", "KB", "MB", "GB", "TB"]; let amount = Number(value), unit = 0; while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; } return `${number(amount)} ${units[unit]}`; }
 function autoscalingLabel(table) {
   if (table?.billingMode === "PAY_PER_REQUEST") return "On-demand / service managed";
   if (table?.autoscaling?.mode === "SERVICE_MANAGED") return "Service managed";
   const read = table?.autoscaling?.read, write = table?.autoscaling?.write;
   if (read || write) return [read && `Read ${read.min}-${read.max}`, write && `Write ${write.min}-${write.max}`].filter(Boolean).join("; ");
-  return table?.autoscaling?.mode === "NOT_DETECTED" ? "Not detected" : "Not configured";
+  return table?.autoscaling?.mode === "NOT_DETECTED" ? "Not configured / not exposed" : "Not configured";
 }
 function detailCard(provider, table, verified = true) {
   if (!table) return "";
-  const mode = table.billingMode || table.capacityMode || "Unknown", reads = table.readCapacityUnits ?? table.readUnits, writes = table.writeCapacityUnits ?? table.writeUnits;
-  const rows = [["Status", table.status || table.state || "Unknown"], ["Capacity mode", mode], [provider === "OCI NoSQL" ? "Read units" : "RCU", reads ?? "N/A"], [provider === "OCI NoSQL" ? "Write units" : "WCU", writes ?? "N/A"], ["Autoscaling", autoscalingLabel(table)], [table.storageGB != null ? "Storage limit" : "Table size", table.storageGB != null ? `${number(table.storageGB)} GB` : bytes(table.tableSizeBytes)], ["Item count", table.itemCount == null ? "Not exposed" : number(table.itemCount)]];
-  return `<article class="resource-detail"><h3>${escapeHtml(provider)} · ${escapeHtml(table.name)}</h3><p>${verified ? "Live provider metadata" : "Recent local evidence · not live-verified"}</p><dl>${rows.map(([key, item]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(item)}</dd>`).join("")}</dl></article>`;
+  const unavailable = verified ? "Not exposed by provider inventory" : "Not live-verified";
+  const mode = verified ? table.billingMode || table.capacityMode || unavailable : unavailable;
+  const readValue = table.readCapacityUnits != null ? `${number(table.readCapacityUnits)} RCU` : table.readUnits != null ? `${number(table.readUnits)} RU` : unavailable;
+  const writeValue = table.writeCapacityUnits != null ? `${number(table.writeCapacityUnits)} WCU` : table.writeUnits != null ? `${number(table.writeUnits)} WU` : unavailable;
+  const storageLimit = provider === "OCI NoSQL" && table.storageGB != null ? `${number(table.storageGB)} GB` : provider === "AWS DynamoDB" ? "Not table-configurable" : provider === "ADB DynamoDB API" ? "Database-scoped, not table-scoped" : unavailable;
+  const rows = [
+    ["Status", verified ? table.status || table.state || unavailable : unavailable],
+    ["Capacity mode", mode],
+    ["Read capacity", verified ? readValue : unavailable],
+    ["Write capacity", verified ? writeValue : unavailable],
+    ["Autoscaling", verified ? autoscalingLabel(table) : unavailable],
+    ["Current table size", verified ? bytes(table.tableSizeBytes) : unavailable],
+    ["Storage limit", storageLimit],
+    ["Item count", verified ? table.itemCount == null ? unavailable : number(table.itemCount) : unavailable]
+  ];
+  const verification = verified ? "" : `<div class="resource-verification"><span>The name came from local evidence; the ADB endpoint has not been queried in this lookup.</span><button type="button" class="secondary compact-button" data-action="verify-adb-metadata">Verify live metadata</button></div>`;
+  return `<article class="resource-detail"><h3>${escapeHtml(provider)} · ${escapeHtml(table.name)}</h3><p>${verified ? "Live provider metadata" : "Recent local evidence · not live-verified"}</p><dl>${rows.map(([key, item]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(item)}</dd>`).join("")}</dl>${verification}</article>`;
 }
 function renderDestinationDetails() {
   if (!destinations) { $("destination-details").replaceChildren(); return; }
@@ -132,6 +146,15 @@ function renderDestinationDetails() {
   const ndcs = destinations.nosqlTables?.find(item => item.name === resourceValue("ndcs-table"));
   const recent = destinations.recentEvidenceTables?.adb?.find(item => item.table === resourceValue("adb-table"));
   $("destination-details").innerHTML = [detailCard("AWS DynamoDB", typeof aws === "string" ? { name: aws } : aws), detailCard("ADB DynamoDB API", typeof adb === "string" ? { name: adb } : adb, Boolean(adb)), !adb && recent ? detailCard("ADB DynamoDB API", { name: recent.table }, false) : "", detailCard("OCI NoSQL", ndcs)].join("");
+}
+
+async function verifyAdbMetadata() {
+  if (!resourceValue("adb-table")) throw new Error("Select an ADB DynamoDB-API table first");
+  if (!value("adb-runner")) throw new Error("Select an ADB regional runner first");
+  $("adb-live-table-lookup").checked = true;
+  $("runner-status").className = "callout";
+  $("runner-status").textContent = "Verifying the selected ADB table through a read-only ListTables + DescribeTable probe on the regional runner...";
+  await lookupDestinations();
 }
 
 async function lookupDestinations({ manageButton = true } = {}) {
@@ -214,7 +237,7 @@ function showStep(step) {
 function showPreview(preview) {
   const warnings = preview.warnings?.length ? `<ul>${preview.warnings.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "";
   $("preview-status").className = `callout${preview.warnings?.length ? " warning" : ""}`; $("preview-status").innerHTML = `<b>Valid immutable preview.</b> Infrastructure: ${escapeHtml(preview.infrastructure.mode)}. No cloud mutation was performed.${warnings}`;
-  const values = [["Triplet sessions", preview.totals.tripletSessions], ["Target executions", preview.totals.targetExecutions], ["Scheduled operations", preview.totals.totalScheduledOperations], ["Database minutes", preview.totals.totalDatabaseMinutes]];
+  const values = [["Synchronized workload sessions", preview.totals.tripletSessions], ["Target executions", preview.totals.targetExecutions], ["Scheduled operations", preview.totals.totalScheduledOperations], ["Database minutes", preview.totals.totalDatabaseMinutes]];
   $("totals").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join("");
   $("matrix").innerHTML = preview.rows.map(row => `<tr><td>${escapeHtml(row.id)}</td><td>${escapeHtml(row.configFile)}</td><td>${escapeHtml(row.loadModel)}</td><td>${row.readPercent}/${row.writePercent}</td><td>${escapeHtml(row.consistency)}</td><td>${number(row.durationSeconds)} s</td><td>${number(row.scheduledOperationsPerTarget)}</td><td>${number(row.averageScheduledOperationsPerSecond)}</td><td>${escapeHtml(row.targets.join(", "))}</td><td><code>${escapeHtml(row.configSha256.slice(0, 12))}...</code></td></tr>`).join("");
   $("download").disabled = false;
@@ -295,6 +318,7 @@ $("adb-enabled").addEventListener("change", syncCloudCatalog);
 document.querySelectorAll("[data-go-step]").forEach(button => button.addEventListener("click", () => showStep(Number(button.dataset.goStep))));
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
 for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => { syncManual(prefix); renderDestinationDetails(); });
+$("destination-details").addEventListener("click", event => { if (event.target.closest('[data-action="verify-adb-metadata"]')) void verifyAdbMetadata().catch(error => { $("runner-status").className = "callout error"; $("runner-status").textContent = error?.message || String(error); }); });
 $("adb-table-manual").addEventListener("input", () => localStorage.setItem("kvs-dashboard-adb-table", value("adb-table-manual")));
 document.querySelectorAll(".option-search").forEach(input => input.addEventListener("input", () => filterOptions(input)));
 document.querySelectorAll('#live-series-controls input').forEach(input => input.addEventListener("change", renderLiveCharts));

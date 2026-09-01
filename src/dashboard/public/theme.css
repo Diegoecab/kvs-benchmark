@@ -130,6 +130,8 @@ select[size] { min-height: 36px; }
 .resource-detail dl { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; margin: 0; }
 .resource-detail dt { color: var(--text-secondary); font-size: 10px; }
 .resource-detail dd { margin: 0; font-size: 11px; font-weight: 700; text-align: right; }
+.resource-verification { display: grid; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-secondary); font-size: 10px; line-height: 1.45; }
+.compact-button { justify-self: start; min-height: 32px; padding: 6px 10px; font-size: 10px; }
 
 button, .button-link { min-height: 36px; padding: 8px 14px; border-radius: 6px; font-size: 12px; transition: filter .15s, transform .15s; }
 button:hover:not(:disabled), .button-link:hover { filter: brightness(.96); }
