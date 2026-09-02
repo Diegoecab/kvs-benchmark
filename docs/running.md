@@ -52,7 +52,7 @@ Choose preload/audit rates below the table's effective capacity. Increasing conc
 ## Fast prerequisite path
 
 1. Create one dedicated table and one runner VM per target using the provider console or an independently managed infrastructure workflow.
-2. Install Node.js 22 and clone this repository, or build a reusable runner image after dependency installation.
+2. Launch the promoted provider VM image containing the immutable runner container and validated control agent.
 3. Apply the minimal runtime IAM policy; the benchmark repository does not need infrastructure-management permissions.
 4. Run `validate`, then `preload`, then `certify`.
 5. Schedule all three `run` commands with the same UTC `--start-at`.

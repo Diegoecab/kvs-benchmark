@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const excluded = new Set([".git", ".kvs", ".secrets", "node_modules", "results", "benchmark-package"]);
+const excluded = new Set([".git", ".kvs", ".run-command-control", ".secrets", "node_modules", "results", "benchmark-package"]);
 const patterns = [
   /AKIA[0-9A-Z]{16}/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,

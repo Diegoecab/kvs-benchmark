@@ -286,7 +286,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
   const env = target === "adb"
     ? `envargs=(--env-file /opt/kvs-dashboard/adb-api.runtime.env -e AWS_REGION=${spec.adbOciRegion})`
     : `envargs=(-e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION=${spec.ndcsOciRegion} -e OCI_COMPARTMENT_ID=${spec.ndcsCompartment})`;
-  if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nif ! sudo -n podman --version >/dev/null 2>&1; then echo "Runner prerequisite failed: the ocarun user requires passwordless access to Podman for the benchmark commands. Apply the documented sudoers policy or replace this runner." >&2; exit 20; fi\nif ! sudo -n podman image exists ${shellQuote(spec.image)}; then sudo -n podman pull ${shellQuote(spec.image)} >/dev/null; fi\nsudo -n podman image exists ${shellQuote(spec.image)}\n${target === "adb" ? adbCredentialGuard(spec) : ""}\n`;
+  if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nif ! sudo -n podman --version >/dev/null 2>&1; then echo "Runner prerequisite failed: the ocarun user requires passwordless access to Podman for the benchmark commands. Apply the documented sudoers policy or replace this runner." >&2; exit 20; fi\ntest -d /opt/kvs-dashboard\nsudo -n podman image exists ${shellQuote(spec.image)}\n${target === "adb" ? adbCredentialGuard(spec) : ""}\n`;
   const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt} --shard-count=${runnerContext.count} --shard-index=${runnerContext.index}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : action === "preload" ? `preload --rate=${spec.preloadRate} --max-inflight=${spec.preloadMaxInflight}${startAt ? ` --start-at=${startAt}` : ""}` : `${action} --rate=20 --max-inflight=16`;
   const outputArgument = action === "doctor" ? "results/doctor.json" : "results";
   const invocation = `sudo podman run --rm --network host "${'${envargs[@]}'}" -v "$root:/app/results:z" "$image" ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=${target} --table=${shellQuote(table)} --output=${outputArgument}`;
@@ -299,7 +299,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
 }
 
 function awsCommands(spec, action, output, startAt, session = spec.matrix[0], runnerContext = { index: 0, count: 1 }) {
-  if (action === "preflight") return ["set -eu", "podman --version", `if ! podman image exists ${spec.image}; then podman pull ${spec.image} >/dev/null; fi`, `podman image exists ${spec.image}`];
+  if (action === "preflight") return ["set -eu", "podman --version", "test -d /opt/kvs-dashboard", `podman image exists ${spec.image}`];
   const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt} --shard-count=${runnerContext.count} --shard-index=${runnerContext.index}` : action === "preload" ? `preload --rate=${spec.preloadRate} --max-inflight=${spec.preloadMaxInflight}${startAt ? ` --start-at=${startAt}` : ""}` : `${action} --rate=20 --max-inflight=16`;
   const prefix = `results/${spec.runId}/${action}/aws${isRun ? sourceRemote(spec, "aws", runnerContext.index) : ""}`;
   const invocation = `podman run --rm --network host -e AWS_REGION=${spec.awsRegion} -v $root:/app/results:Z $image ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=aws --table=${spec.awsTable} --output=results`;

@@ -24,7 +24,7 @@ This runbook prepares the existing-infrastructure dashboard path for AWS DynamoD
 
    Each destination creates its own private RSA bootstrap key. Only ciphertext crosses Run Command; the destination requests and stores its own table-scoped `READ_WRITE` access key. The database password is not changed, and plaintext passwords or API keys never enter local files, command output, dashboard state, or benchmark evidence.
 
-The dashboard preflight now downloads its pinned image digest when it is missing. No manual image pull is required.
+The promoted VM image must already contain the pinned container digest. Dashboard preflight validates it locally and never downloads from a registry; a missing digest blocks the run and requires a new image release.
 
 ## Dashboard flow
 
@@ -40,7 +40,7 @@ The dashboard preflight now downloads its pinned image digest when it is missing
 
 ## Expected guardrails
 
-- Preflight verifies SSM/Run Command, Podman, and the exact pinned image. Missing images are pulled automatically.
+- Preflight verifies SSM/Run Command, Podman, the persistent runner directory, and the exact pinned image without package or registry access.
 - Resource validation checks existing table state, schema, endpoint identity, and provisioned capacity without creating infrastructure.
 - Preload is idempotent. When preload measurement is enabled, all targets receive the same offered write rate and shared UTC start; compare achieved throughput together with failures and latency rather than treating the requested rate as achieved throughput. Strong certification must produce the same canonical hash on all three products before workload execution.
 - Each workload gets one shared UTC T0. Evidence upload and final accounting must complete before the next session.

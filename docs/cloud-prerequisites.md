@@ -41,13 +41,13 @@ Every runner must:
 - run Podman or Docker and contain the exact immutable image digest selected in the dashboard;
 - have `chronyc`, `jq`, and a synchronized clock;
 - have no autoscaling or background workload that changes the client capacity during a session;
-- have outbound HTTPS access to its database endpoint, evidence store, IAM/control service, and container registry when an image pull is required.
+- have outbound HTTPS access to its database endpoint, evidence store, and IAM/control service. Registry access belongs to the separate image-build workflow.
 
 Distributed runs require the same number and declared compute/memory class of dedicated runners for every enabled target. Every selected VM must pass readiness independently. The controller uses only the primary runner for preload/certification and all selected runners for the sharded workload.
 
 No public IP, SSH, SCP, private SSH key, or inbound connection from the dashboard is required by the control protocol. If the experiment itself requires distinct service-observed source addresses, design and verify distinct egress paths explicitly; separate VNIC private addresses behind one NAT do not prove distinct egress.
 
-The default OCI topology uses a private subnet with no ingress rules and routes outbound HTTPS through a NAT Gateway (and OCI Service Gateway where appropriate). When distinct service-observed source addresses are an explicit benchmark variable, a dedicated public subnet is allowed only with an empty ingress policy, one ephemeral public egress address per runner, provider-native Run Command control, and recorded egress verification; public IPs must not be introduced merely to reach the container registry or cloud APIs.
+The default OCI topology uses a private subnet with no ingress rules or public IPs and routes supported OCI services through a Service Gateway. A promoted image requires no bootstrap internet route; any NAT recovery route remains blocked before readiness validation and throughout measurement. When distinct service-observed source addresses are an explicit benchmark variable, record the private VNIC identities and verify the identity observed by the service rather than assuming it from the network diagram.
 
 ## OCI runners: Run Command
 
@@ -79,7 +79,7 @@ For this suite, prefer the narrower command allowlist implemented by the infrast
 ocarun ALL=(root) NOPASSWD: /usr/bin/podman *, /usr/bin/mkdir *, /usr/bin/chmod *, /usr/bin/chronyc *, /usr/bin/jq *
 ```
 
-Create the sudoers file with mode `0440`, validate it with `visudo -cf`, and include it in cloud-init or the runner image. `podman`, `mkdir`, `chmod`, and `chronyc` are used by every OCI benchmark target; protected ADB runtime configuration additionally requires `jq`. Do not rely on an interactive password or terminal. Rootless Podman is not an equivalent fallback unless the image, subuid/subgid mappings, mounts, network behavior, and runtime-file access are independently certified.
+Create the sudoers file with mode `0440`, validate it with `visudo -cf`, and include it in the runner image. `ocarun` is the user; on the certified Oracle Linux image its group is `oracle-cloud-agent`, so `/opt/kvs-dashboard` must use that group rather than assuming an `ocarun` group exists. `podman`, `mkdir`, `chmod`, and `chronyc` are used by every OCI benchmark target; protected ADB runtime configuration additionally requires `jq`. Do not rely on an interactive password or terminal. Rootless Podman is not an equivalent fallback unless the image, subuid/subgid mappings, mounts, network behavior, and runtime-file access are independently certified.
 
 Cloud-init must validate the pinned image from the Run Command identity itself before declaring readiness:
 
@@ -87,7 +87,7 @@ Cloud-init must validate the pinned image from the Run Command identity itself b
 sudo -u ocarun sudo -n /usr/bin/podman image exists <IMAGE_DIGEST>
 ```
 
-The infrastructure baseline writes `/var/lib/cloud/instance/kvs-benchmark-ready` only after packages, services, sudoers validation, image preload, and the `ocarun` check succeed. Discovery of a running VM alone is not readiness.
+The infrastructure baseline runs one fail-fast bootstrap and writes `/var/lib/cloud/instance/kvs-benchmark-ready` only after services, sudoers, persistent directory, clock, local image digest, and the `ocarun` execution path succeed. Separate cloud-init commands must not write the marker after an earlier prerequisite fails. Discovery of a running VM alone is not readiness.
 
 OCI permits at most five Run Command scripts in flight. An accepted or expired diagnostic can occupy the queue until the service expires or cancels it. Do not repeatedly click **Run** while a preflight is pending; inspect/cancel stale benchmark commands before retrying.
 

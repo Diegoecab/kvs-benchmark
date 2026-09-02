@@ -103,7 +103,7 @@ test("cloud adapter source remains platform-neutral", () => {
   assert.match(source, /uploader_pid=\$!\\nset \+e\\n\(\\n\$\{guardedInvocation\}\\n\)\\ncode=\$\?/);
   assert.doesNotMatch(source, /AWS_REGION=us-ashburn-1/);
   assert.match(source, /AWS_REGION=\$\{spec\.adbOciRegion\}/);
-  assert.match(source, /podman pull/);
+  assert.doesNotMatch(source, /podman pull/, "preflight must validate the pinned local image without registry access");
   assert.match(source, /\.adb-admin-password/);
   assert.match(source, /KVS_REQUIRED_SECONDS/);
   assert.match(source, /expiration_minutes:5256000/);

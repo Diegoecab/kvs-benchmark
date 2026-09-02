@@ -62,7 +62,7 @@ For cloud execution against existing runners, install the AWS CLI and OCI CLI be
 
 The cloud benchmark uses existing dedicated tables and runners. A run advances only after each gate succeeds:
 
-1. runner readiness and immutable image validation;
+1. runner readiness and immutable local image validation, without package or registry work;
 2. existing resource, endpoint, schema, and capacity validation;
 3. canonical dataset preload;
 4. strong-read certification and identical dataset hash across targets;
@@ -126,6 +126,8 @@ Strong and eventual consistency are separate checked-in profiles. They use the s
 ## Portable runner
 
 AWS and OCI runners use the same `linux/amd64` container image and immutable digest. See the [container contract](docs/container.md). The image includes the harness and runtime dependencies, but never credentials or cloud-specific resource identifiers.
+
+Provider-specific VM images should preinstall the control agent, Podman, clock synchronization, swap, and this exact container digest. Normal preflight never installs packages or pulls from a registry; a missing digest is an image-release defect. The infrastructure repository owns the image factory, multi-VM promotion test, and pinned AMI/OCI image IDs.
 
 ```bash
 docker run --rm ghcr.io/diegoecab/kvs-benchmark-runner:main doctor --config=configs/smoke.json --target=mock --skip-network=true
