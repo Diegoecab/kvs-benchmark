@@ -14,7 +14,7 @@ import { distribution } from "../core/statistics.mjs";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const configDirectory = path.join(repositoryRoot, "configs");
 const defaultOutput = path.join(repositoryRoot, ".kvs", "cloud-runs");
-const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:6eb0c3d31123dfec7b49cd6c319d0ebc781efe4b397b2a38997be6249577188b";
+const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:7bf7c3d1d3d5ae1b650ca38f8434ec545572bec6a7c07bdd3829b0f29bb392c9";
 const stages = ["runner-readiness", "resource-validation", "dataset-preload", "dataset-certification", "dataset-hash-match", "t0-scheduled", "workload", "evidence-collection", "acceptance-validation", "package-generation"];
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const terminalStatuses = new Set(["complete", "failed", "stopped"]);
