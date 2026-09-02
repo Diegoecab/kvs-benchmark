@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { CliCloudAdapter, CloudAcceptanceRuns } from "../src/dashboard/cloud-acceptance.mjs";
+import { aggregateProgressSources, aggregateTargetEvidence, CliCloudAdapter, CloudAcceptanceRuns, remoteScript, validateCloudSpecification } from "../src/dashboard/cloud-acceptance.mjs";
 import { writeStateAtomic } from "../src/dashboard/file-state.mjs";
 
 const hash = "a".repeat(64);
@@ -16,6 +16,54 @@ const input = {
     ndcs: { enabled: true, profile: "OCI_NOSQL_TEST", region: "us-ashburn-1", resource: "ndcs_table", runnerId: "ocid1.instance.test.ndcs", runnerCompartmentId: "ocid1.compartment.test", evidenceBucket: "ndcs-evidence", compartmentId: "ocid1.compartment.test" },
   },
 };
+
+test("one global load-generator count is enforced for every target", () => {
+  const distributed = structuredClone(input);
+  distributed.execution.loadGeneratorCount = 3;
+  distributed.targets.aws.runners = ["i-111111", "i-222222", "i-333333"].map((id, index) => ({ id, privateIp: `10.0.0.${index + 1}` }));
+  distributed.targets.adb.runners = [1, 2, 3].map(index => ({ id: `ocid1.instance.test.adb${index}`, compartmentId: "ocid1.compartment.test", privateIp: `10.0.1.${index}` }));
+  distributed.targets.ndcs.runners = [1, 2, 3].map(index => ({ id: `ocid1.instance.test.ndcs${index}`, compartmentId: "ocid1.compartment.test", privateIp: `10.0.2.${index}` }));
+  const spec = validateCloudSpecification(distributed);
+  assert.equal(spec.loadGeneratorCount, 3); assert.equal(spec.awsRunners.length, 3); assert.equal(spec.adbRunners.length, 3); assert.equal(spec.ndcsRunners.length, 3);
+  assert.deepEqual(spec.awsRunners[0], { id: "i-111111", displayName: null, privateIp: "10.0.0.1", publicIp: null, egressIp: null, egressIpVerified: false, availabilityDomain: null, shape: null, vcpus: null, memoryGB: null, networkMode: null });
+  distributed.targets.ndcs.runners.pop();
+  assert.throws(() => validateCloudSpecification(distributed), /OCI NoSQL requires exactly 3 distinct runner VM/);
+});
+
+test("workload stage fans out to every target runner and passes deterministic shard options", async () => {
+  const calls = [], adapter = new CliCloudAdapter();
+  adapter.aws = async (_spec, action, output, _startAt, _session, runner, index, count) => { calls.push({ target: "aws", action, output, runner: runner.id, index, count }); };
+  adapter.oci = async (_spec, target, action, output, _startAt, _session, runner, index, count) => { calls.push({ target, action, output, runner: runner.id, index, count }); };
+  const runners = prefix => [0, 1, 2].map(index => ({ id: prefix === "aws" ? `i-${index + 1}` : `ocid1.instance.${prefix}${index + 1}`, compartmentId: "ocid1.compartment.test" }));
+  const spec = { runId: "distributed", enabled: ["aws", "adb", "ndcs"], awsRunners: runners("aws"), adbRunners: runners("adb"), ndcsRunners: runners("ndcs"), matrix: [{ id: "smoke-r1", scheduledOperationsPerTarget: 10 }] };
+  await adapter.stage(spec, "run/smoke-r1", "2026-01-01T00:00:00.000Z", spec.matrix[0]);
+  assert.equal(calls.length, 9); assert.deepEqual(new Set(calls.map(call => call.count)), new Set([3])); assert.deepEqual(new Set(calls.map(call => call.index)), new Set([0, 1, 2])); assert.ok(calls.every(call => /sources\/source-0[1-3]$/.test(call.output.replaceAll("\\", "/"))));
+  const script = remoteScript({ ...spec, image: input.imageDigest, adbTable: "table", adbBucket: "bucket", adbOciRegion: "us-ashburn-1", overrides: {} }, "adb", "run/smoke-r1", "/tmp/run", "2026-01-01T00:00:00.000Z", spec.matrix[0], { index: 1, count: 3 });
+  assert.match(script, /--shard-count=3 --shard-index=1/); assert.match(script, /sources\/source-02/);
+});
+
+test("per-runner evidence is preserved and aggregated into one target result", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-cloud-aggregate-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const action = "run/smoke-r1", target = "aws", runners = [0, 1].map(index => ({ id: `i-${index + 1}`, privateIp: `10.0.0.${index + 1}` }));
+  const spec = { runId: "aggregate", localOutput: root, awsRunners: runners };
+  for (let index = 0; index < runners.length; index += 1) {
+    const directory = path.join(root, "evidence", action, target, "sources", `source-0${index + 1}`); fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, "operations.ndjson"), `${JSON.stringify({ sequence: index, serviceLatencyMs: index + 1, intendedLatencyMs: index + 1, queueDelayMs: 0, inFlightAtStart: 1, readUnits: 1, writeUnits: 0, error: null })}\n`);
+    fs.writeFileSync(path.join(directory, "telemetry.ndjson"), `${JSON.stringify({ at: `2026-01-01T00:00:0${index}.000Z`, inFlight: 1 })}\n`);
+    fs.writeFileSync(path.join(directory, "clock.txt"), `clock ${index}\n`);
+    fs.writeFileSync(path.join(directory, "run-config.json"), JSON.stringify({ config: { name: "smoke" }, configSha256: hash, shard: { count: 2, index } }));
+    fs.writeFileSync(path.join(directory, "summary.json"), JSON.stringify({ target, configSha256: hash, scheduledStartAt: "2026-01-01T00:00:00.000Z", actualStartAt: "2026-01-01T00:00:00.000Z", actualEndAt: "2026-01-01T00:00:01.000Z", actualDurationMs: 1000, startSkewMs: index, durationSeconds: 1, shard: { count: 2, index }, logicalScheduled: 2, scheduled: 1, attempted: 1, completed: 1, failed: 0, accounted: 1, errors: {}, schedulerDrops: 0, retries: 0, harnessPassed: true, workload: {}, concurrency: { configuredMaxInflight: 2, observedAtOperationStart: { max: 1 } }, client: {}, consumedCapacity: { readUnits: 1, writeUnits: 0 } }));
+  }
+  const summary = await aggregateTargetEvidence(spec, action, target);
+  assert.equal(summary.loadGenerators.count, 2); assert.equal(summary.scheduled, 2); assert.equal(summary.completed, 2); assert.equal(summary.consumedCapacity.readUnits, 2); assert.equal(summary.harnessPassed, true);
+  assert.equal(fs.readFileSync(path.join(root, "evidence", action, target, "operations.ndjson"), "utf8").trim().split("\n").length, 2);
+  assert.ok(fs.existsSync(path.join(root, "evidence", action, target, "sources", "source-01", "summary.json")));
+});
+
+test("live progress aggregates counts and rate while retaining every source", () => {
+  const progress = aggregateProgressSources([{ source: "source-01", value: { at: "2026-01-01T00:00:01Z", scheduled: 5, completed: 4, failed: 1, achievedOperationsPerSecond: 2, inFlight: 1, rollingP95Ms: 3, runner: { available: true, cpuUtilizationPercent: 10, networkReceiveBytesPerSecond: 2 } } }, { source: "source-02", value: { at: "2026-01-01T00:00:02Z", scheduled: 5, completed: 5, failed: 0, achievedOperationsPerSecond: 3, inFlight: 2, rollingP95Ms: 4, runner: { available: true, cpuUtilizationPercent: 20, networkReceiveBytesPerSecond: 3 } } }]);
+  assert.equal(progress.scheduled, 10); assert.equal(progress.completed, 9); assert.equal(progress.failed, 1); assert.equal(progress.achievedOperationsPerSecond, 5); assert.equal(progress.rollingP95Ms, 4); assert.equal(progress.runner.cpuUtilizationPercent, 20); assert.equal(progress.runner.networkReceiveBytesPerSecond, 5); assert.equal(progress.sources.length, 2);
+});
 
 test("cloud acceptance exposes every preflight, dataset, synchronization, evidence, and packaging stage", async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-cloud-test-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -81,6 +129,40 @@ test("AWS polling tolerates a transient local control-plane failure", async t =>
   const adapter = new CliCloudAdapter({ execute });
   const result = await adapter.aws({ runId: "poll-test", localOutput: root, awsProfile: "test", awsRegion: "us-east-1", awsRunner: "i-test", image: input.imageDigest, awsTable: "table", bucket: "bucket", overrides: {}, matrix: [] }, "preflight", "/tmp/preflight", null);
   assert.equal(result.stdout, "done"); assert.equal(polls, 2);
+});
+
+test("missing OCI final evidence is republished and recollected without failing the run", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-cloud-evidence-recovery-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const spec = { runId: "cloud-evidence-recovery", localOutput: root, enabled: ["adb"], matrix: [{ id: "smoke-r1" }] };
+  let republished = false, collections = 0;
+  const adapter = new CliCloudAdapter({ collectionRetryMs: 0 });
+  adapter.collectTarget = async (_spec, action, target) => {
+    collections += 1;
+    if (!republished) return;
+    const destination = path.join(root, "evidence", action, target); fs.mkdirSync(destination, { recursive: true });
+    for (const name of ["operations.ndjson", "telemetry.ndjson", "summary.json", "run-config.json", "clock.txt"]) fs.writeFileSync(path.join(destination, name), "evidence\n");
+  };
+  adapter.republishTargetEvidence = async (_spec, action, target) => { assert.equal(action, "run/smoke-r1"); assert.equal(target, "adb"); republished = true; };
+  await adapter.collect(spec, "run/smoke-r1");
+  assert.equal(republished, true); assert.equal(collections, 3);
+  const journal = fs.readFileSync(path.join(root, "control", "command-journal.ndjson"), "utf8");
+  assert.match(journal, /evidence-republish-started/); assert.match(journal, /evidence-republish-recovered/);
+});
+
+test("runner metrics normalize AWS and OCI infrastructure timelines", async () => {
+  const execute = async (file, args) => {
+    if (file === "aws") {
+      const queries = JSON.parse(args[args.indexOf("--metric-data-queries") + 1]);
+      return JSON.stringify({ MetricDataResults: queries.map(query => ({ Id: query.Id, Timestamps: ["2026-01-01T00:00:00.000Z"], Values: [query.Id.startsWith("network") ? 6000 : 12] })) });
+    }
+    const query = args[args.indexOf("--query-text") + 1], name = /^([^[]+)/.exec(query)[1], values = name.startsWith("Networks") ? [1000, 7000] : [10, 20];
+    return JSON.stringify({ data: [{ "aggregated-datapoints": values.map((value, index) => ({ timestamp: `2026-01-01T00:0${index}:00.000Z`, value })) }] });
+  };
+  const adapter = new CliCloudAdapter({ execute }), startAt = "2026-01-01T00:00:00.000Z", endAt = "2026-01-01T00:02:00.000Z";
+  const aws = await adapter.awsRunnerMetrics({ awsProfile: "test", awsRegion: "us-east-1", awsRunner: "i-test" }, startAt, endAt);
+  assert.equal(aws.metrics.cpuUtilizationPercent[0].value, 12); assert.equal(aws.metrics.networkReceiveBytesPerSecond[0].value, 100); assert.deepEqual(aws.unavailable, ["memoryUtilizationPercent", "loadAverage1m"]);
+  const oci = await adapter.ociRunnerMetrics({ adbOciProfile: "test", adbOciRegion: "us-ashburn-1", adbRunnerCompartment: "ocid1.compartment.test", adbRunner: "ocid1.instance.test" }, "adb", startAt, endAt);
+  assert.equal(oci.metrics.cpuUtilizationPercent.length, 2); assert.equal(oci.metrics.networkReceiveBytesPerSecond[0].value, 100); assert.deepEqual(oci.unavailable, []);
 });
 
 test("service errors remain benchmark results when every operation is accounted", async t => {

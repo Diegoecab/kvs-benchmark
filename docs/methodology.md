@@ -6,6 +6,16 @@ The scored benchmark is deterministic and open-loop. It asks: **what happens whe
 
 The read/write percentage is explicit and deterministic. Each target receives the same operation type, key and intended timestamp sequence over a canonical `pk`/`sk`/`version`/`payload` record, so correctness and capacity-unit boundaries remain explicit.
 
+Item size is reported twice: configured payload bytes and the UTF-8 byte length of the largest provider-neutral canonical JSON record in the dataset. The latter includes logical attribute names and values but is not a claim about a provider's physical storage or billable item-size calculation.
+
+## Distributed load generators
+
+A run may select `N` load-generator VMs per target. The same `N` applies to every compared target and the VMs use the same declared client class. Open-loop operations are assigned by `globalSequence mod N`; the aggregate schedule, operation identities, and offered rate are unchanged. Closed-loop global worker IDs are partitioned by the same rule. All sources receive one shared T0.
+
+Raw evidence and runner telemetry are preserved for every source. Target-level latency distributions are recalculated from the union of operation records instead of averaging percentiles. Aggregate live counts and throughput are sums; the displayed rolling P95 is the maximum source rolling P95 until final evidence is available.
+
+Provider-reported VM/VNIC IP metadata identifies the selected source resource but does not prove the address observed by a service after NAT or proxying. Any experiment whose hypothesis depends on source IP must separately verify effective egress identity.
+
 ## Read consistency
 
 Consistency is an explicit workload dimension, never an implicit provider default. Every run declares either `strong` or `eventual`, and results from different consistency modes are not pooled.
@@ -48,6 +58,7 @@ Successful and failed-operation latency distributions are reported separately. R
 - queue delay, event-loop delay, CPU, memory and network counters;
 - consumed capacity and provider-side monitoring metrics;
 - dataset certificate, configuration hash, commit SHA and evidence checksums.
+- configured payload bytes, logical canonical item bytes, load-generator count, declared VM shape/vCPU/memory, source VM/network identities, verified egress identity when available, and shard mapping;
 - scheduled and actual UTC start/end timestamps for every target in every repetition.
 
 ## Method ownership

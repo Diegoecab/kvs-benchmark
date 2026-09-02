@@ -14,6 +14,7 @@ import { generatePackage } from "./report/package.mjs";
 import { coordinate, readCoordinationPlan } from "./core/coordinator.mjs";
 import { collectMetrics } from "./collectors/metrics.mjs";
 import { startDashboard } from "./dashboard/server.mjs";
+import { normalizeShardOptions } from "./core/sharding.mjs";
 
 function args() {
   const values = { command: process.argv[2] };
@@ -25,6 +26,13 @@ function args() {
 }
 
 const options = args();
+const shardCountOption = options["shard-count"] ?? process.env.KVS_SHARD_COUNT;
+const shardIndexOption = options["shard-index"] ?? process.env.KVS_SHARD_INDEX;
+const hasShardCount = shardCountOption != null;
+const hasShardIndex = shardIndexOption != null;
+if (hasShardCount !== hasShardIndex) throw new Error("--shard-count and --shard-index must be provided together");
+if ((hasShardCount || hasShardIndex) && !["run", "phase1"].includes(options.command)) throw new Error("--shard-count and --shard-index apply only to run and phase1");
+const shard = normalizeShardOptions({ shardCount: shardCountOption ?? 1, shardIndex: shardIndexOption ?? 0 });
 const configCommands = ["validate", "doctor", "run", "preload", "certify", "phase1"];
 if (configCommands.includes(options.command) && !options.config) throw new Error("--config is required");
 const runtimeOverrides = {
@@ -54,8 +62,8 @@ if (options.command === "validate") {
     const common = { config: executionConfig, configSha256: loaded.sha256, provider, target: options.target, table: options.table, output: options.output };
     const summary = options.command === "run"
       ? loaded.config.load.model === "closed-loop"
-        ? await runClosedLoop({ ...common, startAt: options["start-at"] })
-        : await runOpenLoop({ ...common, startAt: options["start-at"] })
+        ? await runClosedLoop({ ...common, startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index })
+        : await runOpenLoop({ ...common, startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index })
       : options.command === "preload"
         ? await preloadDataset({ ...common, rate: Number(options.rate || 50), maxInflight: Number(options["max-inflight"] || 64), startAt: options["start-at"] })
         : await certifyDataset({ ...common, rate: Number(options.rate || 25), maxInflight: Number(options["max-inflight"] || 64) });
@@ -79,7 +87,7 @@ if (options.command === "validate") {
   try {
     await runCapacityPlan({ plan, target: options.target, table: options.table, startAt: options["start-at"], provider: capacityProvider, dryRun: true });
     const [workloadResult, capacityResult] = await Promise.allSettled([
-      runOpenLoop({ config: loaded.config, configSha256: loaded.sha256, provider: workloadProvider, target: options.target, table: options.table, output: path.join(options.output, "workload"), startAt: options["start-at"] }),
+      runOpenLoop({ config: loaded.config, configSha256: loaded.sha256, provider: workloadProvider, target: options.target, table: options.table, output: path.join(options.output, "workload"), startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index }),
       runCapacityPlan({ plan, target: options.target, table: options.table, startAt: options["start-at"], output: path.join(options.output, "capacity-events.json"), provider: capacityProvider }),
     ]);
     if (capacityResult.status === "rejected") throw capacityResult.reason;

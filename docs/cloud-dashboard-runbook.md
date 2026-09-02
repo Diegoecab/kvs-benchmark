@@ -15,8 +15,14 @@ This runbook prepares the existing-infrastructure dashboard path for AWS DynamoD
 1. Put both OCI runners in a Dynamic Group scoped to the benchmark compartment.
 2. Grant that Dynamic Group Run Command execution, `manage object-family`, and `manage nosql-family` in the benchmark compartment.
 3. Enable the Compute Instance Run Command plugin and TCP/443 egress on both private runners.
-4. Run `node scripts/bootstrap-existing-adb-ddb-api.mjs --autonomous-database-id=<ocid> --table-name=<table> --profile=<oci-profile> --region=<region> --benchmark-repository=<path> --apply=true` from the infrastructure repository to validate BYOL, rotate the transient ADMIN password, issue a time-limited API key, and set the dedicated table to 500/500.
-5. Run `scripts/bootstrap-adb-runner-runtime.mjs` from this repository to transfer that key to the ADB runner using RSA-OAEP ciphertext. Confirm `ADB_RUNNER_RUNTIME_READY`. For an unattended reusable runner, use the separately authorized credential-rotation procedure so preflight can renew a table-scoped key before it becomes too short-lived for the complete matrix.
+4. For a first-time database bootstrap only, use the reviewed infrastructure procedure to create the dedicated API table and install the protected renewal credential on one cloud runner. Do not rotate an existing database password merely to add another load generator.
+5. For a distributed ADB target, provision an independently scoped runtime on every selected destination runner without moving a plaintext secret through the local control plane:
+
+   ```bash
+   node scripts/bootstrap-adb-runner-from-source.mjs --profile=<oci-profile> --region=<region> --compartment-id=<runner-compartment-ocid> --source-runner-id=<existing-secured-runner-ocid> --destination-runner-ids=<runner-1-ocid>,<runner-2-ocid>,<runner-3-ocid> --database-id=<adb-ocid> --table=<benchmark-table> --image=<registry/image@sha256:digest>
+   ```
+
+   Each destination creates its own private RSA bootstrap key. Only ciphertext crosses Run Command; the destination requests and stores its own table-scoped `READ_WRITE` access key. The database password is not changed, and plaintext passwords or API keys never enter local files, command output, dashboard state, or benchmark evidence.
 
 The dashboard preflight now downloads its pinned image digest when it is missing. No manual image pull is required.
 

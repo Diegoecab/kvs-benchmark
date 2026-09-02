@@ -43,9 +43,11 @@ Every runner must:
 - have no autoscaling or background workload that changes the client capacity during a session;
 - have outbound HTTPS access to its database endpoint, evidence store, IAM/control service, and container registry when an image pull is required.
 
-No public IP, SSH, SCP, private SSH key, or inbound connection from the dashboard is required.
+Distributed runs require the same number and declared compute/memory class of dedicated runners for every enabled target. Every selected VM must pass readiness independently. The controller uses only the primary runner for preload/certification and all selected runners for the sharded workload.
 
-OCI runners must use a private subnet with no ingress rules. Route outbound HTTPS through a NAT Gateway (and OCI Service Gateway where appropriate); do not assign a public IP merely to reach the container registry or cloud APIs.
+No public IP, SSH, SCP, private SSH key, or inbound connection from the dashboard is required by the control protocol. If the experiment itself requires distinct service-observed source addresses, design and verify distinct egress paths explicitly; separate VNIC private addresses behind one NAT do not prove distinct egress.
+
+The default OCI topology uses a private subnet with no ingress rules and routes outbound HTTPS through a NAT Gateway (and OCI Service Gateway where appropriate). When distinct service-observed source addresses are an explicit benchmark variable, a dedicated public subnet is allowed only with an empty ingress policy, one ephemeral public egress address per runner, provider-native Run Command control, and recorded egress verification; public IPs must not be introduced merely to reach the container registry or cloud APIs.
 
 ## OCI runners: Run Command
 
@@ -134,7 +136,7 @@ The operator identity needs at least `ec2:DescribeInstances`, `ssm:DescribeInsta
 - Canonical key schema compatible with the suite (`pk` and `sk`).
 - Provisioned capacity sufficient for the selected profile, with configurable autoscaling disabled for accepted fixed-capacity sessions.
 - One private S3 bucket for AWS evidence and one private OCI Object Storage bucket for OCI evidence.
-- The same dataset seed, key count, payload size, image digest, configuration hash, consistency mode, retries, and scheduled UTC T0 across compared targets.
+- The same dataset seed, key count, payload/logical item size, image digest, configuration hash, consistency mode, retries, load-generator count, declared runner class, shard mapping, and scheduled UTC T0 across compared targets.
 - Explicit dashboard authorization for canonical preload writes.
 
 The suite validates the table and strongly certifies the canonical dataset before scheduling workload. It stops before workload if runner readiness, resource validation, certification, hash equality, or another acceptance gate fails.

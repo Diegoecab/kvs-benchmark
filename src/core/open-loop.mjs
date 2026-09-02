@@ -4,16 +4,21 @@ import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import { buildOperationStream, canonicalKey } from "./workload.mjs";
 import { errorEvidence } from "./errors.mjs";
 import { distribution } from "./statistics.mjs";
+import { RunnerHealthSampler } from "./runner-health.mjs";
+import { normalizeShardOptions } from "./sharding.mjs";
+import { canonicalItemSizeBytes } from "./dataset.mjs";
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, ms)));
 const fixed = value => Number(value.toFixed(3));
 
-export async function runOpenLoop({ config, configSha256, provider, target, table, output, startAt, onProgress }) {
+export async function runOpenLoop({ config, configSha256, provider, target, table, output, startAt, onProgress, shardCount = 1, shardIndex = 0 }) {
   if (config.load.model !== "open-loop") throw new Error("run currently supports only open-loop configurations");
+  const shard = normalizeShardOptions({ shardCount, shardIndex });
   fs.mkdirSync(output, { recursive: true });
   const operationsOutput = fs.createWriteStream(path.join(output, "operations.ndjson"), { encoding: "utf8" });
   const telemetryOutput = fs.createWriteStream(path.join(output, "telemetry.ndjson"), { encoding: "utf8" });
-  const operations = buildOperationStream(config);
+  const logicalOperations = buildOperationStream(config);
+  const operations = logicalOperations.filter(operation => operation.sequence % shard.count === shard.index);
   const executionMode = config.load.executionMode || "concurrent";
   const effectiveMaxInflight = executionMode === "sequential" ? 1 : config.load.maxInflight;
   const requestedStart = startAt ? Date.parse(startAt) : Date.now() + 2000;
@@ -26,15 +31,16 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   let completed = 0, schedulerDrops = 0, peakInflight = 0, readUnits = 0, writeUnits = 0, retries = 0;
   const cpuStart = process.cpuUsage();
   const loopDelay = monitorEventLoopDelay({ resolution: 10 });
+  const runnerHealth = new RunnerHealthSampler();
   loopDelay.enable();
   const progress = record => {
     if (!onProgress) return;
     const elapsedSeconds = Math.max(0.001, (Date.now() - actualStartEpochMs) / 1000);
-    try { onProgress({ scheduled: operations.length, accounted: completed + Object.values(errors).reduce((sum, value) => sum + value, 0), completed, failed: Object.values(errors).reduce((sum, value) => sum + value, 0) - schedulerDrops, schedulerDrops, inFlight: inFlight.size, achievedOperationsPerSecond: completed / elapsedSeconds, latestOperation: record?.operation || null, latestLatencyMs: record?.serviceLatencyMs ?? null, latestError: record?.error?.name || null, at: new Date().toISOString() }); } catch {}
+    try { onProgress({ scheduled: operations.length, logicalScheduled: logicalOperations.length, shard, accounted: completed + Object.values(errors).reduce((sum, value) => sum + value, 0), completed, failed: Object.values(errors).reduce((sum, value) => sum + value, 0) - schedulerDrops, schedulerDrops, inFlight: inFlight.size, achievedOperationsPerSecond: completed / elapsedSeconds, latestOperation: record?.operation || null, latestLatencyMs: record?.serviceLatencyMs ?? null, latestError: record?.error?.name || null, at: new Date().toISOString() }); } catch {}
   };
 
   const telemetryTimer = setInterval(() => {
-    const sample = { at: new Date().toISOString(), inFlight: inFlight.size, rssBytes: process.memoryUsage().rss, heapUsedBytes: process.memoryUsage().heapUsed };
+    const sample = { at: new Date().toISOString(), inFlight: inFlight.size, rssBytes: process.memoryUsage().rss, heapUsedBytes: process.memoryUsage().heapUsed, runner: runnerHealth.sample() };
     concurrency.push(inFlight.size);
     telemetryOutput.write(`${JSON.stringify(sample)}\n`);
   }, config.load.telemetryIntervalMs);
@@ -88,8 +94,8 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   const elapsedSeconds = config.load.schedule.reduce((sum, step) => sum + step.seconds, 0);
   const summary = {
     schemaVersion: 1, generatedAt: new Date().toISOString(), configName: config.name, configSha256, target, table, consistency: config.workload.consistency,
-    startAt: new Date(requestedStart).toISOString(), scheduledStartAt: new Date(requestedStart).toISOString(), scheduledEndAt: new Date(requestedStart + elapsedSeconds * 1000).toISOString(), actualStartAt: new Date(actualStartEpochMs).toISOString(), actualEndAt: new Date(actualEndEpochMs).toISOString(), actualDurationMs: actualEndEpochMs - actualStartEpochMs, startSkewMs: actualStartEpochMs - requestedStart, durationSeconds: elapsedSeconds, scheduled: operations.length, completed, failed: Object.values(errors).reduce((sum, value) => sum + value, 0) - schedulerDrops, completionRate: operations.length ? completed / operations.length : 0,
-    achievedOperationsPerSecond: elapsedSeconds ? completed / elapsedSeconds : 0, errors, schedulerDrops, retries, workload: { readPercent: config.workload.readPercent, writePercent: config.workload.writePercent, executionMode },
+    startAt: new Date(requestedStart).toISOString(), scheduledStartAt: new Date(requestedStart).toISOString(), scheduledEndAt: new Date(requestedStart + elapsedSeconds * 1000).toISOString(), actualStartAt: new Date(actualStartEpochMs).toISOString(), actualEndAt: new Date(actualEndEpochMs).toISOString(), actualDurationMs: actualEndEpochMs - actualStartEpochMs, startSkewMs: actualStartEpochMs - requestedStart, durationSeconds: elapsedSeconds, shard, logicalScheduled: logicalOperations.length, scheduled: operations.length, completed, failed: Object.values(errors).reduce((sum, value) => sum + value, 0) - schedulerDrops, completionRate: operations.length ? completed / operations.length : 0,
+    achievedOperationsPerSecond: elapsedSeconds ? completed / elapsedSeconds : 0, errors, schedulerDrops, retries, workload: { readPercent: config.workload.readPercent, writePercent: config.workload.writePercent, executionMode }, dataset: { keyCount: config.dataset.keyCount, payloadBytes: config.dataset.payloadBytes, logicalItemBytes: canonicalItemSizeBytes(config) },
     successfulServiceLatencyMs: distribution(successfulService), successfulIntendedLatencyMs: distribution(successfulIntended), failedServiceLatencyMs: distribution(failedService), queueDelayMs: distribution(queueDelays),
     concurrency: { executionMode, configuredMaxInflight: config.load.maxInflight, effectiveMaxInflight, observedAtOperationStart: { ...distribution(concurrency), max: peakInflight } },
     client: { cpuUsageMicros: process.cpuUsage(cpuStart), memoryAtEnd: process.memoryUsage(), eventLoopDelayMs: { mean: fixed(loopDelay.mean / 1e6), p95: fixed(loopDelay.percentile(95) / 1e6), p99: fixed(loopDelay.percentile(99) / 1e6), max: fixed(loopDelay.max / 1e6) } },
@@ -100,6 +106,6 @@ export async function runOpenLoop({ config, configSha256, provider, target, tabl
   summary.serviceSuccessRate = operations.length ? completed / operations.length : 0;
   summary.passed = summary.harnessPassed;
   fs.writeFileSync(path.join(output, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
-  fs.writeFileSync(path.join(output, "run-config.json"), `${JSON.stringify({ config, configSha256, target, table, endpointConfigured: Boolean(process.env.DDB_ENDPOINT) }, null, 2)}\n`);
+  fs.writeFileSync(path.join(output, "run-config.json"), `${JSON.stringify({ config, configSha256, target, table, shard, endpointConfigured: Boolean(process.env.DDB_ENDPOINT) }, null, 2)}\n`);
   return summary;
 }

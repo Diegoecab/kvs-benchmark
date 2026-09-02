@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { applyRuntimeOverrides, readConfig, scheduledOperationCount } from "../core/config.mjs";
+import { canonicalItemSizeBytes } from "../core/dataset.mjs";
 
 const CONFIG_NAME = /^[a-z0-9-]+\.json$/;
 
@@ -76,7 +77,7 @@ export function previewMatrix(spec, { configDirectory }) {
     for (let repetition = 1; repetition <= repetitionsForPreset; repetition += 1) {
       const durationSeconds = loaded.config.load.durationSeconds || loaded.config.load.schedule?.reduce((sum, step) => sum + step.seconds, 0) || null;
       const scheduledOperationsPerTarget = loaded.config.load.model === "open-loop" ? scheduledOperationCount(loaded.config) : null;
-      const row = { id: `${loaded.config.name}-r${repetition}`, name: loaded.config.name, configFile: file, configName: loaded.config.name, configSha256: loaded.sha256, repetition, loadModel: loaded.config.load.model, executionMode: loaded.config.load.executionMode || "fixed-concurrency", loadSchedule: loaded.config.load.schedule || [], maxInflight: loaded.config.load.maxInflight || null, durationSeconds, consistency: loaded.config.workload.consistency, readPercent: loaded.config.workload.readPercent, writePercent: loaded.config.workload.writePercent, fixedConcurrency: loaded.config.load.fixedConcurrency || null, maxAttempts: loaded.config.client.maxAttempts, requestTimeoutMs: loaded.config.client.requestTimeoutMs, keyCount: loaded.config.dataset.keyCount, payloadBytes: loaded.config.dataset.payloadBytes, effectiveOverrides: compatibleOverrides, ignoredOverrides, scheduledOperationsPerTarget, averageScheduledOperationsPerSecond: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget / durationSeconds, averageScheduledOperationsPerMinute: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget * 60 / durationSeconds, targets: targets.map(value => value.target) };
+      const row = { id: `${loaded.config.name}-r${repetition}`, name: loaded.config.name, configFile: file, configName: loaded.config.name, configSha256: loaded.sha256, repetition, loadModel: loaded.config.load.model, executionMode: loaded.config.load.executionMode || "fixed-concurrency", loadSchedule: loaded.config.load.schedule || [], maxInflight: loaded.config.load.maxInflight || null, durationSeconds, consistency: loaded.config.workload.consistency, readPercent: loaded.config.workload.readPercent, writePercent: loaded.config.workload.writePercent, fixedConcurrency: loaded.config.load.fixedConcurrency || null, maxAttempts: loaded.config.client.maxAttempts, requestTimeoutMs: loaded.config.client.requestTimeoutMs, keyCount: loaded.config.dataset.keyCount, payloadBytes: loaded.config.dataset.payloadBytes, logicalItemBytes: canonicalItemSizeBytes(loaded.config), effectiveOverrides: compatibleOverrides, ignoredOverrides, scheduledOperationsPerTarget, averageScheduledOperationsPerSecond: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget / durationSeconds, averageScheduledOperationsPerMinute: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget * 60 / durationSeconds, targets: targets.map(value => value.target) };
       row.description = describeWorkload(row);
       rows.push(row);
     }

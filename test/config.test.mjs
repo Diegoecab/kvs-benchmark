@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { applyRuntimeOverrides, readConfig, scheduledOperationCount, validateConfig } from "../src/core/config.mjs";
-import { canonicalRecord, expectedDatasetSha256 } from "../src/core/dataset.mjs";
+import { canonicalItemSizeBytes, canonicalRecord, expectedDatasetSha256 } from "../src/core/dataset.mjs";
 
 test("certified x1 profile schedules 72,000 operations", () => {
   const { config } = readConfig(new URL("../configs/x1-read-open-loop.json", import.meta.url));
@@ -104,6 +104,9 @@ test("canonical dataset hash is deterministic and content-sensitive", () => {
   const config = readConfig(new URL("../configs/smoke.json", import.meta.url)).config;
   assert.equal(expectedDatasetSha256(config), expectedDatasetSha256(config));
   assert.deepEqual(Object.keys(canonicalRecord(config, 0)).sort(), ["payload", "pk", "sk", "version"]);
+  const largestRecord = canonicalRecord(config, config.dataset.keyCount - 1);
+  assert.equal(canonicalItemSizeBytes(config), Buffer.byteLength(JSON.stringify(largestRecord), "utf8"));
+  assert.ok(canonicalItemSizeBytes(config) > config.dataset.payloadBytes);
   const changed = structuredClone(config); changed.dataset.payloadBytes += 1;
   assert.notEqual(expectedDatasetSha256(config), expectedDatasetSha256(changed));
 });

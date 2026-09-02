@@ -8,6 +8,7 @@ let bootstrap = null;
 let lastSpec = null;
 let currentStep = 1;
 let runLocked = false;
+let wizardActive = false;
 let suppressPreview = true;
 let discovered = null;
 let destinations = null;
@@ -22,25 +23,28 @@ let runHistoryRefreshAt = 0;
 let runHistoryPending = false;
 let stageBrowserRunId = null;
 let selectedStageKey = null;
+let stageChartSession = null;
+let stageChartResult = null;
 const selectedTargets = new Set();
 let automaticDiscovery = null;
 let automaticDiscoveryPending = false;
 const draftKey = "kvs-dashboard-draft-v1";
 const incompatibleRunnerKey = "kvs-dashboard-incompatible-runners-v1";
 const incompatibleRunners = new Set((() => { try { const values = JSON.parse(localStorage.getItem(incompatibleRunnerKey)); return Array.isArray(values) ? values : []; } catch { return []; } })());
-const draftFieldIds = ["infra-repo", "infra-ref", "infra-workspace", "destination-cloud", "destination-product", "aws-profile", "aws-region", "aws-runner", "aws-table", "aws-table-manual", "artifact-bucket", "adb-profile", "adb-region", "adb-compartment", "adb-database", "adb-runner", "adb-table", "adb-table-manual", "adb-artifact-bucket", "ndcs-profile", "ndcs-region", "ndcs-compartment", "ndcs-runner", "ndcs-table", "ndcs-table-manual", "ndcs-artifact-bucket", "image-digest", "t0-lead-seconds", "preload-rate", "preload-max-inflight"];
+const runnerSelectIds = ["aws-runner", "adb-runner", "ndcs-runner"];
+const draftFieldIds = ["infra-repo", "infra-ref", "infra-workspace", "destination-cloud", "destination-product", "load-generator-count", "aws-profile", "aws-region", "aws-runner", "aws-table", "aws-table-manual", "artifact-bucket", "adb-profile", "adb-region", "adb-compartment", "adb-database", "adb-runner", "adb-table", "adb-table-manual", "adb-artifact-bucket", "ndcs-profile", "ndcs-region", "ndcs-compartment", "ndcs-runner", "ndcs-table", "ndcs-table-manual", "ndcs-artifact-bucket", "image-digest", "t0-lead-seconds", "preload-rate", "preload-max-inflight"];
 let draftSaveTimer = null;
 let restoringDraft = false;
 
 function readDraft() { try { const draft = JSON.parse(localStorage.getItem(draftKey)); return draft?.schemaVersion === 1 ? draft : null; } catch { return null; } }
 function draftSnapshot() {
-  const fields = Object.fromEntries(draftFieldIds.map(id => [id, $(id)?.value ?? ""]));
+  const fields = Object.fromEntries(draftFieldIds.map(id => [id, runnerSelectIds.includes(id) ? selectedValues(id) : $(id)?.value ?? ""]));
   const presets = Object.fromEntries([...document.querySelectorAll("#configs tr")].map(row => [row.dataset.config, { selected: row.querySelector('input[name="config"]').checked, repetitions: row.querySelector(".preset-repetitions").value, readPercent: row.querySelector(".preset-read-percent").value, consistency: row.querySelector(".preset-consistency").value, duration: row.querySelector(".preset-duration").value, load: row.querySelector(".preset-load")?.value, concurrency: row.querySelector(".preset-concurrency")?.value }]));
   return { schemaVersion: 1, savedAt: new Date().toISOString(), step: currentStep, infrastructureMode: document.querySelector('input[name="infra-mode"]:checked')?.value, runMode: runMode(), capturePreloadMetrics: $("capture-preload-metrics").checked, selectedTargets: [...selectedTargets], fields, presets };
 }
 function saveDraft() { if (restoringDraft || !bootstrap) return; const draft = draftSnapshot(); localStorage.setItem(draftKey, JSON.stringify(draft)); $("draft-status").textContent = `Saved locally at ${new Date(draft.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`; }
 function scheduleDraftSave() { if (restoringDraft) return; clearTimeout(draftSaveTimer); draftSaveTimer = setTimeout(saveDraft, 250); }
-function setDraftField(id, item) { const element = $(id); if (!element || item == null) return; if (element.tagName === "SELECT" && ![...element.options].some(option => option.value === String(item))) return; element.value = String(item); }
+function setDraftField(id, item) { const element = $(id); if (!element || item == null) return; if (element.multiple && Array.isArray(item)) { const selected = new Set(item.map(String)); for (const option of element.options) option.selected = selected.has(option.value); return; } if (element.tagName === "SELECT" && ![...element.options].some(option => option.value === String(item))) return; element.value = String(item); }
 function applyPresetDraft(presets = {}) { for (const row of document.querySelectorAll("#configs tr")) { const item = presets[row.dataset.config]; if (!item) continue; row.querySelector('input[name="config"]').checked = Boolean(item.selected); for (const [selector, key] of [[".preset-repetitions", "repetitions"], [".preset-read-percent", "readPercent"], [".preset-consistency", "consistency"], [".preset-duration", "duration"], [".preset-load", "load"], [".preset-concurrency", "concurrency"]]) { const control = row.querySelector(selector); if (control && item[key] != null) control.value = item[key]; } row.querySelector(".preset-read-percent").dispatchEvent(new Event("input")); } updatePresetCount(); }
 async function restoreDraft(draft) {
   if (!draft) { void autoDiscoverActiveTarget(); return; }
@@ -56,7 +60,7 @@ async function restoreDraft(draft) {
   restoringDraft = true; for (const id of draftFieldIds) setDraftField(id, draft.fields?.[id]); restoringDraft = false;
   for (const target of ["aws", "adb", "ndcs"]) $(`${target}-enabled`).checked = selectedTargets.has(target);
   for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) syncManual(prefix);
-  renderDestinationSummary(); renderDestinationDetails(); syncLiveChartVisibility(); showStep(draft.step || 1);
+  updateRunnerSelectionStatus(); renderDestinationSummary(); renderDestinationDetails(); syncLiveChartVisibility(); currentStep = draft.step || 1;
   $("draft-status").textContent = `Draft restored from ${new Date(draft.savedAt).toLocaleString()}`;
 }
 
@@ -117,7 +121,7 @@ async function load() {
   const runId = restoredRun?.id || savedRun;
   if (runId) {
     localStorage.setItem("kvs-dashboard-run-id", runId);
-    showStep(5);
+    showOperations();
     if (restoredRun) showSmoke(restoredRun);
     void monitorRun(runId, restoredRun?.mode || "async", true);
   }
@@ -166,11 +170,12 @@ function renderRunOverview(run) {
   const targets = Object.keys(run.targetStatus || {}), inventory = run.resourceInventory || {};
   const cards = targets.map(target => {
     const reportedStatus = run.targetStatus[target], waitingForT0 = reportedStatus === "running" && run.sharedStartAt && Date.now() < Date.parse(run.sharedStartAt), status = waitingForT0 ? "scheduled" : reportedStatus, [label, description] = targetStatusView(status), resource = inventory[target] || {};
-    const runner = resource.runnerInstanceId || resource.runnerInstanceOcid, table = resource.tableName || "Table pending validation";
-    return `<article class="target-overview provider-${escapeHtml(target)}"><div class="target-overview-heading"><div>${providerMark(target)}<span><b>${escapeHtml(runTargetLabel(target))}</b><small>${escapeHtml(resource.region || "Region pending")}</small></span></div><span class="target-state ${escapeHtml(status || "pending")}">${escapeHtml(label)}</span></div><strong>${escapeHtml(description)}</strong><dl><div><dt>Table</dt><dd title="${escapeHtml(table)}">${escapeHtml(table)}</dd></div><div><dt>Runner</dt><dd title="${escapeHtml(runner || "Pending")}">${escapeHtml(compactResourceId(runner || "Pending"))}</dd></div></dl></article>`;
+    const fallbackRunner = resource.runnerInstanceId || resource.runnerInstanceOcid, runners = Array.isArray(resource.runnerInstances) && resource.runnerInstances.length ? resource.runnerInstances : fallbackRunner ? [{ id: fallbackRunner }] : [], table = resource.tableName || "Table pending validation";
+    const identities = runners.map(item => `${item.displayName || compactResourceId(item.id)} @ ${item.publicIp || item.privateIp || "IP pending"}`), runnerLabel = identities.length ? `${identities.length} source${identities.length === 1 ? "" : "s"} · ${identities.join(", ")}` : "Pending";
+    return `<article class="target-overview provider-${escapeHtml(target)}"><div class="target-overview-heading"><div>${providerMark(target)}<span><b>${escapeHtml(runTargetLabel(target))}</b><small>${escapeHtml(resource.region || "Region pending")}</small></span></div><span class="target-state ${escapeHtml(status || "pending")}">${escapeHtml(label)}</span></div><strong>${escapeHtml(description)}</strong><dl><div><dt>Table</dt><dd title="${escapeHtml(table)}">${escapeHtml(table)}</dd></div><div><dt>Load generators</dt><dd title="${escapeHtml(runnerLabel)}">${escapeHtml(runnerLabel)}</dd></div></dl></article>`;
   }).join("");
   view.classList.remove("hidden");
-  view.innerHTML = `<div class="run-overview-heading"><div><p class="eyebrow">ACTIVE CLOUD RUN</p><h4>${escapeHtml(runStageLabel(stage?.name))}</h4><p>${escapeHtml(run.id)} · started ${escapeHtml(localDateTime(run.startedAt))} · elapsed ${escapeHtml(durationLabel(run.startedAt))}</p></div><span class="run-history-state ${escapeHtml(run.status)}">${["queued", "running", "stopping"].includes(run.status) ? '<i class="run-light" aria-hidden="true"></i>' : ""}${escapeHtml(run.status.toUpperCase())}</span></div><div class="target-overview-grid">${cards}</div>`;
+  view.innerHTML = `<div class="run-overview-heading"><div><p class="eyebrow">ACTIVE CLOUD RUN</p><h4>${escapeHtml(runStageLabel(stage?.name))}</h4><p>${escapeHtml(run.id)} · started ${escapeHtml(localDateTime(run.startedAt))} · elapsed ${escapeHtml(durationLabel(run.startedAt))}</p></div><span class="run-history-state ${escapeHtml(run.status)}">${escapeHtml(run.status.toUpperCase())}</span></div><div class="target-overview-grid">${cards}</div>`;
 }
 function stageTechnicalDetail(stage) {
   if (!stage?.detail || stage.detail === "Passed") return "";
@@ -203,13 +208,67 @@ function sessionSchedule(session, status, startAt) {
   let offset = 0, elapsed = status === "running" && startAt ? Math.max(0, (Date.now() - Date.parse(startAt)) / 1000) : null;
   return `<div class="load-stage-grid">${session.loadSchedule.map((step, index) => { const start = offset, end = offset += Number(step.seconds); const phaseStatus = status === "complete" ? "complete" : status === "running" && elapsed >= end ? "complete" : status === "running" && elapsed >= start ? "running" : status === "not-run" ? "not-run" : "pending"; return `<article class="load-stage ${phaseStatus}"><span>Stage ${index}</span><b>${number(step.operationsPerSecond)} ops/s</b><small>${number(step.seconds)}s · T+${number(start)}s to T+${number(end)}s</small><i>${phaseStatus === "not-run" ? "Not run" : phaseStatus}</i></article>`; }).join("")}</div>`;
 }
+function drawStageBarChart(canvas, session, stageSummaries, { metric, offered = false, logarithmic = false, suffix = "" }) {
+  const context = canvas.getContext("2d"), width = canvas.width, height = canvas.height, margin = { left: 66, right: 18, top: 26, bottom: 62 }, enabled = enabledSeries();
+  context.clearRect(0, 0, width, height); context.fillStyle = "#0b1017"; context.fillRect(0, 0, width, height);
+  const targets = Object.keys(stageSummaries).filter(target => enabled.has(target) && Array.isArray(stageSummaries[target])), series = [...(offered && enabled.has("offered") ? ["offered"] : []), ...targets];
+  const values = session.loadSchedule.map((step, index) => Object.fromEntries(series.map(target => [target, target === "offered" ? Number(step.operationsPerSecond) : Number(metric(stageSummaries[target][index] || {}))])));
+  const rawMaximum = Math.max(1, ...values.flatMap(item => Object.values(item).filter(Number.isFinite))), scale = value => logarithmic ? Math.log10(Math.max(0, value) + 1) : value, maximum = scale(rawMaximum) * 1.12;
+  context.strokeStyle = "#26303d"; context.fillStyle = "#9aa7b8"; context.font = "11px ui-monospace, monospace"; context.textAlign = "right";
+  for (let tick = 0; tick <= 4; tick += 1) { const fraction = (4 - tick) / 4, y = margin.top + (height - margin.top - margin.bottom) * tick / 4, raw = logarithmic ? Math.pow(10, maximum * fraction) - 1 : maximum * fraction; context.beginPath(); context.moveTo(margin.left, y); context.lineTo(width - margin.right, y); context.stroke(); context.fillText(number(raw), margin.left - 8, y + 4); }
+  if (!series.length || !values.length) { context.fillText("Select at least one target", width / 2, height / 2); return; }
+  const plotWidth = width - margin.left - margin.right, groupWidth = plotWidth / values.length, barGap = 3, barWidth = Math.min(34, Math.max(5, (groupWidth - 18) / series.length - barGap));
+  values.forEach((stage, stageIndex) => {
+    const barsWidth = series.length * (barWidth + barGap) - barGap, startX = margin.left + groupWidth * stageIndex + (groupWidth - barsWidth) / 2;
+    series.forEach((target, seriesIndex) => { const raw = stage[target], normalized = Number.isFinite(raw) ? scale(raw) / maximum : 0, barHeight = Math.max(0, (height - margin.top - margin.bottom) * normalized), x = startX + seriesIndex * (barWidth + barGap), y = height - margin.bottom - barHeight; context.fillStyle = chartColors[target] || "#64748b"; if (target === "offered") { context.strokeStyle = context.fillStyle; context.lineWidth = 2; context.strokeRect(x, y, barWidth, barHeight); } else context.fillRect(x, y, barWidth, barHeight); if (Number.isFinite(raw) && barWidth >= 12) { context.save(); context.translate(x + barWidth / 2, Math.max(margin.top + 8, y - 4)); context.rotate(-Math.PI / 2); context.fillStyle = "#cbd5e1"; context.font = "10px ui-monospace, monospace"; context.textAlign = "left"; context.fillText(`${number(raw)}${suffix}`, 0, 3); context.restore(); } });
+    const step = session.loadSchedule[stageIndex]; context.fillStyle = "#b7c2d0"; context.textAlign = "center"; context.font = "11px ui-monospace, monospace"; context.fillText(`Stage ${stageIndex}`, margin.left + groupWidth * (stageIndex + .5), height - 38); context.fillStyle = "#748197"; context.fillText(`${number(step.operationsPerSecond)} ops/s · ${number(step.seconds)}s`, margin.left + groupWidth * (stageIndex + .5), height - 20);
+  });
+}
+function renderOfferedLoadStageCharts(session, result) {
+  const panel = $("offered-stage-panel"), stageSummaries = result?.stageSummaries || {}, targets = Object.keys(stageSummaries).filter(target => Array.isArray(stageSummaries[target]) && stageSummaries[target].length);
+  stageChartSession = session || null; stageChartResult = result || null;
+  if (!panel || !session || !targets.length || !Array.isArray(session.loadSchedule) || !session.loadSchedule.length) { if (panel) panel.classList.add("hidden"); return; }
+  panel.classList.remove("hidden"); $("offered-stage-caption").textContent = `${session.id} · each ramp is shown independently; target visibility follows the comparison selector above.`;
+  drawStageBarChart($("stage-throughput-chart"), session, stageSummaries, { offered: true, metric: item => item.successfulOperationsPerSecond, suffix: "" });
+  drawStageBarChart($("stage-success-chart"), session, stageSummaries, { metric: item => Number(item.serviceSuccessRate || 0) * 100, suffix: "%" });
+  drawStageBarChart($("stage-latency-chart"), session, stageSummaries, { metric: item => item.successfulServiceLatencyMs?.p95, logarithmic: true, suffix: "ms" });
+}
+const runnerMetricDefinitions = [
+  ["runner-history-cpu", "CPU utilization · percent", "cpuUtilizationPercent", value => value],
+  ["runner-history-memory", "Memory utilization · percent", "memoryUtilizationPercent", value => value],
+  ["runner-history-load", "Load average · 1 minute", "loadAverage1m", value => value],
+  ["runner-history-network", "Network throughput · Mbit/s", "network", value => value * 8 / 1_000_000],
+];
+function runnerMetricsMarkup(result) {
+  const metrics = result?.runnerMetrics || {}, available = Object.values(metrics).filter(item => item?.available);
+  if (!available.length) return "";
+  const limitations = Object.entries(metrics).filter(([, item]) => item?.unavailable?.length).map(([target, item]) => `${runTargetLabel(target)}: ${item.unavailable.join(", ")} unavailable`).join(" · ");
+  return `<section class="runner-metrics-panel"><div class="stage-chart-heading"><div><h6>Runner VM health</h6><p>Provider-native one-minute samples aligned to this workload window.</p></div><div class="stage-chart-legend">${Object.keys(metrics).map(target => `<span>${providerMark(target)}${escapeHtml(runTargetLabel(target))}</span>`).join("")}</div></div><div class="chart-grid runner-chart-grid">${runnerMetricDefinitions.map(([id, title]) => `<figure><figcaption>${escapeHtml(title)}</figcaption><canvas id="${id}" width="900" height="240"></canvas></figure>`).join("")}</div>${limitations ? `<p class="chart-note">${escapeHtml(limitations)}. Missing provider metrics are not rendered as zero.</p>` : ""}</section>`;
+}
+function runnerMetricSeries(result, key, transform) {
+  return Object.entries(result?.runnerMetrics || {}).map(([target, report]) => {
+    let points;
+    if (key === "network") {
+      const received = new Map((report.metrics?.networkReceiveBytesPerSecond || []).map(point => [point.timestamp, Number(point.value)])), transmitted = new Map((report.metrics?.networkTransmitBytesPerSecond || []).map(point => [point.timestamp, Number(point.value)]));
+      points = [...new Set([...received.keys(), ...transmitted.keys()])].sort().map(timestamp => ({ timestamp, value: Number(received.get(timestamp) || 0) + Number(transmitted.get(timestamp) || 0) }));
+    } else points = report.metrics?.[key] || [];
+    return { name: target, values: points.map(point => transform(Number(point.value))).filter(Number.isFinite) };
+  });
+}
+function renderRunnerMetricCharts(result) {
+  for (const [id, _title, key, transform] of runnerMetricDefinitions) {
+    const canvas = $(id); if (!canvas) continue;
+    const series = runnerMetricSeries(result, key, transform), samples = Math.max(0, ...series.map(item => item.values.length));
+    drawChart(canvas, series, "Metric unavailable for this workload window", `${samples} one-minute sample${samples === 1 ? "" : "s"}`);
+  }
+}
 function sessionResultTable(run, session, result, status) {
   const summaries = result?.summaries || (status === "running" ? run.targetMetrics : null) || {};
   if (!Object.keys(summaries).length) return '<p class="stage-empty">Target results will appear here when this session starts.</p>';
   const rows = Object.entries(summaries).map(([target, summary]) => { const completed = Number(summary.completed || 0), failed = Number(summary.failed || 0), scheduled = Number(summary.scheduled || session.scheduledOperationsPerTarget || 0), latency = summary.successfulServiceLatencyMs || {}; return `<tr><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${number(completed + failed)} / ${number(scheduled)}</td><td>${number(failed)}</td><td>${number(summary.achievedOperationsPerSecond ?? summary.operationsPerSecond)} ops/s</td><td>${number(latency.p95 ?? summary.rollingP95Ms ?? summary.p95)} ms</td><td>${number(latency.p99 ?? summary.p99)} ms</td><td>${number(summary.startSkewMs)} ms</td></tr>`; }).join("");
   const stageRows = (session.loadSchedule || []).flatMap((step, index) => Object.entries(result?.stageSummaries || {}).map(([target, stages]) => { const summary = stages[index] || {}, latency = summary.successfulServiceLatencyMs || {}; return `<tr><td>Stage ${index}</td><td>${number(step.operationsPerSecond)} ops/s · ${number(step.seconds)}s</td><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${number(summary.accounted)} / ${number(summary.scheduled)}</td><td>${number(summary.failed)}</td><td>${number(summary.successfulOperationsPerSecond)} ops/s</td><td>${number(latency.p95)} ms</td><td>${number(latency.p99)} ms</td></tr>`; })).join("");
-  const stages = stageRows ? `<h6 class="stage-result-title">Results by offered-load stage</h6><div class="table-wrap stage-results"><table><thead><tr><th>Stage</th><th>Offered load</th><th>Target</th><th>Accounted</th><th>Failed</th><th>Successful throughput</th><th>P95</th><th>P99</th></tr></thead><tbody>${stageRows}</tbody></table></div>` : "";
-  return `<div class="table-wrap stage-results"><table><thead><tr><th>Target</th><th>Accounted</th><th>Failed</th><th>Throughput</th><th>P95</th><th>P99</th><th>T0 skew</th></tr></thead><tbody>${rows}</tbody></table></div>${stages}`;
+  const stages = stageRows ? `<h6 class="stage-result-title">Results by offered-load stage</h6><p class="chart-note">The comparative bar charts for these rows are shown in Execution performance.</p><div class="table-wrap stage-results"><table><thead><tr><th>Stage</th><th>Offered load</th><th>Target</th><th>Accounted</th><th>Failed</th><th>Successful throughput</th><th>P95</th><th>P99</th></tr></thead><tbody>${stageRows}</tbody></table></div>` : "";
+  return `<div class="table-wrap stage-results"><table><thead><tr><th>Target</th><th>Accounted</th><th>Failed</th><th>Throughput</th><th>P95</th><th>P99</th><th>T0 skew</th></tr></thead><tbody>${rows}</tbody></table></div>${stages}${runnerMetricsMarkup(result)}`;
 }
 function sessionStageDetail(run, session) {
   const result = (run.sessionResults || []).find(item => item.id === session.id), status = sessionState(run, session), startAt = result?.sharedStartAt || (run.currentSession?.id === session.id ? run.sharedStartAt : null);
@@ -221,7 +280,8 @@ function workloadStageDetail(run) {
 }
 function renderStageBrowserDetail(run, key) {
   const detail = $("stage-browser-detail");
-  if (key.startsWith("session:")) { const session = (run.matrix || []).find(item => item.id === key.slice(8)); detail.innerHTML = session ? sessionStageDetail(run, session) : '<p class="stage-empty">Session metadata is unavailable.</p>'; return; }
+  if (key.startsWith("session:")) { const session = (run.matrix || []).find(item => item.id === key.slice(8)), result = (run.sessionResults || []).find(item => item.id === session?.id); detail.innerHTML = session ? sessionStageDetail(run, session) : '<p class="stage-empty">Session metadata is unavailable.</p>'; renderOfferedLoadStageCharts(session, result); if (result) renderRunnerMetricCharts(result); return; }
+  renderOfferedLoadStageCharts(null, null);
   const stage = (run.stages || []).find(item => item.name === key.slice(5));
   if (!stage) { detail.innerHTML = '<p class="stage-empty">Select a stage to inspect its evidence.</p>'; return; }
   const content = stage.name === "dataset-preload" ? preloadStageDetail(run) : stage.name === "dataset-certification" ? certificationStageDetail(run) : stage.name === "resource-validation" ? inventoryStageDetail(run) : stage.name === "workload" ? workloadStageDetail(run) : stage.name === "dataset-hash-match" && run.certificates ? certificationStageDetail(run) : stage.name === "package-generation" && run.downloadUrl ? `<a class="button-link" href="${escapeHtml(run.downloadUrl)}">Download benchmark output (.zip)</a>` : stage.status === "running" ? '<p class="stage-empty">This stage is active. Its results will remain available here after it completes.</p>' : stage.status === "pending" ? '<p class="stage-empty">This stage has not started yet.</p>' : stageTechnicalDetail(stage);
@@ -257,7 +317,7 @@ function renderRunHistoryList({ preserveSelection = true } = {}) {
   if (previous && runs.some(run => run.id === previous)) select.value = previous;
   else if (runs.length) select.value = runs[0].id;
   else select.append(new Option("No runs match this filter", ""));
-  $("run-history-list").innerHTML = runs.slice(0, 8).map(run => { const live = !terminalRunStatuses.has(run.status), completed = `${number(run.completedSessions)} / ${number(run.sessionCount)}`; return `<button type="button" class="run-history-row${select.value === run.id ? " selected" : ""}" data-run-id="${escapeHtml(run.id)}"><span class="run-history-state ${escapeHtml(run.status)}">${live ? '<i class="run-light" aria-hidden="true"></i>' : ""}${escapeHtml(run.status.toUpperCase())}</span><span><b>${escapeHtml(run.id)}</b><small>${escapeHtml(runKindLabel(run.kind))} · ${escapeHtml(new Date(run.createdAt).toLocaleString())}</small></span><span>${(run.targets || []).map(target => `<i title="${escapeHtml(runTargetLabel(target))}">${providerMark(target)}</i>`).join("")}</span><span><b>${escapeHtml(completed)}</b><small>sessions</small></span><span><b>${escapeHtml(elapsedLabel(run))}</b><small>elapsed</small></span></button>`; }).join("") || '<p class="run-history-empty">No executions match this filter.</p>';
+  $("run-history-list").innerHTML = runs.slice(0, 8).map(run => { const completed = `${number(run.completedSessions)} / ${number(run.sessionCount)}`; return `<button type="button" class="run-history-row${select.value === run.id ? " selected" : ""}" data-run-id="${escapeHtml(run.id)}"><span class="run-history-state ${escapeHtml(run.status)}">${escapeHtml(run.status.toUpperCase())}</span><span><b>${escapeHtml(run.id)}</b><small>${escapeHtml(runKindLabel(run.kind))} · ${escapeHtml(new Date(run.createdAt).toLocaleString())}</small></span><span>${(run.targets || []).map(target => `<i title="${escapeHtml(runTargetLabel(target))}">${providerMark(target)}</i>`).join("")}</span><span><b>${escapeHtml(completed)}</b><small>sessions</small></span><span><b>${escapeHtml(elapsedLabel(run))}</b><small>elapsed</small></span></button>`; }).join("") || '<p class="run-history-empty">No executions match this filter.</p>';
   for (const button of document.querySelectorAll("[data-run-id]")) button.addEventListener("click", () => { select.value = button.dataset.runId; void showHistoricalRun(button.dataset.runId); renderRunHistoryList(); });
 }
 async function showHistoricalRun(id) {
@@ -268,9 +328,9 @@ async function showHistoricalRun(id) {
     const response = await fetch(`/api/runs/${encodeURIComponent(id)}`, { cache: "no-store" }), run = await response.json();
     if (!response.ok) throw new Error(run.error || `Run lookup failed (${response.status})`);
     const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", targets = cloud ? Object.keys(run.targetStatus || {}) : ["mock"], sessions = run.sessionResults || [];
-    const rows = sessions.flatMap(session => Object.entries(session.summaries || {}).map(([target, summary]) => `<tr><td>${escapeHtml(session.id)}</td><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${number(summary.completed)} / ${number(summary.scheduled)}</td><td>${number(summary.failed)}</td><td>${number(summary.achievedOperationsPerSecond)} ops/s</td><td>${number(summary.successfulServiceLatencyMs?.p95)} ms</td><td>${number(summary.successfulServiceLatencyMs?.p99)} ms</td></tr>`)).join("");
+    const rows = sessions.flatMap(session => { const matrix = (run.matrix || []).find(item => item.id === session.id) || {}; return Object.entries(session.summaries || {}).map(([target, summary]) => `<tr><td>${escapeHtml(session.id)}</td><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${number(summary.completed)} / ${number(summary.scheduled)}</td><td>${number(summary.failed)}</td><td>${number(summary.achievedOperationsPerSecond)} ops/s</td><td>${number(matrix.payloadBytes ?? summary.dataset?.payloadBytes)} B payload / ${number(matrix.logicalItemBytes ?? summary.dataset?.logicalItemBytes)} B logical max</td><td>${number(summary.successfulServiceLatencyMs?.p95)} ms</td><td>${number(summary.successfulServiceLatencyMs?.p99)} ms</td></tr>`); }).join("");
     const workloadNames = [...new Set((run.matrix || []).map(item => item.name || item.configName).filter(Boolean))];
-    detail.innerHTML = `<div class="historical-heading"><div><p class="eyebrow">HISTORICAL · READ-ONLY</p><h4>${escapeHtml(run.id)}</h4><p>${escapeHtml(runKindLabel(run.kind))} · started ${escapeHtml(new Date(run.startedAt || run.createdAt).toLocaleString())} · ${escapeHtml(elapsedLabel(run))}</p></div><span class="run-history-state ${escapeHtml(run.status)}">${escapeHtml(run.status.toUpperCase())}</span></div><div class="historical-facts"><div><span>Targets</span><b>${targets.map(target => `${providerMark(target)} ${escapeHtml(runTargetLabel(target))}`).join(" &nbsp; ")}</b></div><div><span>Sessions</span><b>${number(sessions.length)} / ${number(run.matrix?.length || (run.summary ? 1 : 0))}</b></div><div><span>Workloads</span><b>${escapeHtml(workloadNames.join(", ") || "Local functional test")}</b></div><div><span>Evidence</span><b>${run.downloadUrl ? `<a href="${escapeHtml(run.downloadUrl)}">Download ZIP</a>` : "Package not available"}</b></div></div>${run.error ? `<div class="historical-error">${escapeHtml(run.error)}</div>` : ""}${rows ? `<div class="table-wrap historical-results"><table><thead><tr><th>Session</th><th>Target</th><th>Accounted</th><th>Failed</th><th>Throughput</th><th>P95</th><th>P99</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="run-history-empty">No finalized workload sessions are available for this run. Its pipeline state and error are preserved above.</p>`}`;
+    detail.innerHTML = `<div class="historical-heading"><div><p class="eyebrow">HISTORICAL · READ-ONLY</p><h4>${escapeHtml(run.id)}</h4><p>${escapeHtml(runKindLabel(run.kind))} · started ${escapeHtml(new Date(run.startedAt || run.createdAt).toLocaleString())} · ${escapeHtml(elapsedLabel(run))}</p></div><span class="run-history-state ${escapeHtml(run.status)}">${escapeHtml(run.status.toUpperCase())}</span></div><div class="historical-facts"><div><span>Targets</span><b>${targets.map(target => `${providerMark(target)} ${escapeHtml(runTargetLabel(target))}`).join(" &nbsp; ")}</b></div><div><span>Sessions</span><b>${number(sessions.length)} / ${number(run.matrix?.length || (run.summary ? 1 : 0))}</b></div><div><span>Workloads</span><b>${escapeHtml(workloadNames.join(", ") || "Local functional test")}</b></div><div><span>Evidence</span><b>${run.downloadUrl ? `<a href="${escapeHtml(run.downloadUrl)}">Download ZIP</a>` : "Package not available"}</b></div></div>${run.error ? `<div class="historical-error">${escapeHtml(run.error)}</div>` : ""}${rows ? `<div class="table-wrap historical-results"><table><thead><tr><th>Session</th><th>Target</th><th>Accounted</th><th>Failed</th><th>Throughput</th><th>Item size</th><th>P95</th><th>P99</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="run-history-empty">No finalized workload sessions are available for this run. Its pipeline state and error are preserved above.</p>`}`;
   } catch (error) { detail.innerHTML = `<div class="historical-error">${escapeHtml(error.message)}</div>`; }
 }
 async function refreshRunHistory({ preserveSelection = true, quiet = false } = {}) {
@@ -333,9 +393,9 @@ function renderDestinationSummary() {
   $("destination-summary").innerHTML = cards.join("");
 }
 async function addDestination() {
-  const name = activeTarget(), resource = resourceValue(`${name}-table`), runner = value(`${name}-runner`);
+  const name = activeTarget(), resource = resourceValue(`${name}-table`), runnerIds = selectedValues(`${name}-runner`), required = loadGeneratorCount();
   if (!resource || resource === "__manual__") throw new Error("Select a table before adding the destination");
-  if (!runner) throw new Error("Select a regional runner before adding the destination");
+  if (runnerIds.length !== required) throw new Error(`Select exactly ${required} distinct regional runner VM${required === 1 ? "" : "s"} for every target`);
   // Evidence only supplies a table name. Retrieve the selected ADB table's
   // metadata before rendering its card whenever it is not already live.
   if (name === "adb" && !destinations?.adbTables?.some(item => (item.name || item) === resource)) {
@@ -346,11 +406,21 @@ async function addDestination() {
   $("runner-status").className = "callout"; $("runner-status").textContent = `${name.toUpperCase()} destination added. Choose another provider/product to add more.`;
   scheduleDraftSave();
 }
-function selectedRunner(id) { return discovered?.oci?.find(item => item.id === value(id)) || discovered?.aws?.find(item => item.id === value(id)) || {}; }
+function selectedValues(id) { return [...($(id)?.selectedOptions || [])].map(option => option.value).filter(Boolean); }
+function loadGeneratorCount() { return Math.max(1, Number.parseInt(value("load-generator-count"), 10) || 1); }
+function runnerPool(id) { return id.startsWith("aws-") ? discovered?.aws : id.startsWith("adb-") ? discovered?.adbOci : discovered?.ndcsOci; }
+function selectedRunners(id) { const ids = new Set(selectedValues(id)); return (runnerPool(id) || []).filter(item => ids.has(item.id)); }
+function selectedRunner(id) { return selectedRunners(id)[0] || {}; }
+function runnerAddress(item) { const addresses = [item.privateIp || item.privateIpAddress || item.ipAddress, item.publicIp || item.publicIpAddress].filter(Boolean); return addresses.join(" / ") || "IP pending discovery"; }
+function runnerSpec(item) { return { id: item.id, compartmentId: item.compartmentId, privateIp: item.privateIp || item.privateIpAddress || item.ipAddress, publicIp: item.publicIp || item.publicIpAddress, egressIp: item.egressIp, egressIpVerified: item.egressIpVerified === true, displayName: item.name || item.displayName, availabilityDomain: item.availabilityDomain || item.availabilityZone || item.placement, shape: item.shape || item.instanceType, vcpus: item.vcpus, memoryGB: item.memoryGB, networkMode: item.networkMode }; }
+function targetRunnerFields(id) {
+  const runners = selectedRunners(id), runnerIds = runners.map(item => item.id), runnerCompartmentIds = runners.map(item => item.compartmentId || null);
+  return { runnerId: runnerIds[0] || "", runnerIds, runnerCompartmentId: runnerCompartmentIds[0], runnerCompartmentIds, runners: runners.map(runnerSpec) };
+}
 function resourceValue(prefix) { return value(prefix) === "__manual__" ? value(`${prefix}-manual`) : value(prefix); }
 function specification() {
   const mode = document.querySelector('input[name="infra-mode"]:checked').value;
-  const adbRunner = selectedRunner("adb-runner"), ndcsRunner = selectedRunner("ndcs-runner");
+  const awsRunners = targetRunnerFields("aws-runner"), adbRunners = targetRunnerFields("adb-runner"), ndcsRunners = targetRunnerFields("ndcs-runner");
   const configs = [...document.querySelectorAll('input[name="config"]:checked')].map(input => input.value);
   const repetitionsByFile = Object.fromEntries([...document.querySelectorAll(".preset-repetitions")].map(input => [input.dataset.config, Number(input.value)]));
   const presetRepetitions = Object.fromEntries(configs.map(file => [file, repetitionsByFile[file] || 1]));
@@ -362,13 +432,47 @@ function specification() {
     else item.fixedConcurrency = Number(row.querySelector(".preset-concurrency").value);
     return [row.dataset.config, item];
   }));
-  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: selectedTargets.has("aws"), profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), runnerId: value("aws-runner") }, adb: { enabled: selectedTargets.has("adb"), profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), runnerId: value("adb-runner"), runnerCompartmentId: adbRunner.compartmentId, compartmentId: value("adb-compartment"), evidenceBucket: value("adb-artifact-bucket") }, ndcs: { enabled: selectedTargets.has("ndcs"), profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), runnerId: value("ndcs-runner"), runnerCompartmentId: ndcsRunner.compartmentId, compartmentId: value("ndcs-compartment"), evidenceBucket: value("ndcs-artifact-bucket") } }, configs, presetRepetitions, presetOverrides, overrides: {}, execution: { mode: runMode(), mutableParameters: false, t0LeadSeconds: optionalNumber("t0-lead-seconds"), capturePreloadMetrics: $("capture-preload-metrics").checked, preloadRate: optionalNumber("preload-rate"), preloadMaxInflight: optionalNumber("preload-max-inflight") }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
+  return { schemaVersion: 1, infrastructure: mode === "managed" ? { mode, repositoryPath: value("infra-repo"), gitRef: value("infra-ref"), terraformWorkspace: value("infra-workspace"), apply: false } : { mode }, targets: { aws: { enabled: selectedTargets.has("aws"), profile: value("aws-profile"), region: value("aws-region"), resource: resourceValue("aws-table"), ...awsRunners }, adb: { enabled: selectedTargets.has("adb"), profile: value("adb-profile"), region: value("adb-region"), resource: resourceValue("adb-table"), databaseId: value("adb-database"), ...adbRunners, compartmentId: value("adb-compartment"), evidenceBucket: value("adb-artifact-bucket") }, ndcs: { enabled: selectedTargets.has("ndcs"), profile: value("ndcs-profile"), region: value("ndcs-region"), resource: resourceValue("ndcs-table"), ...ndcsRunners, compartmentId: value("ndcs-compartment"), evidenceBucket: value("ndcs-artifact-bucket") } }, configs, presetRepetitions, presetOverrides, overrides: {}, execution: { mode: runMode(), mutableParameters: false, loadGeneratorCount: loadGeneratorCount(), t0LeadSeconds: optionalNumber("t0-lead-seconds"), capturePreloadMetrics: $("capture-preload-metrics").checked, preloadRate: optionalNumber("preload-rate"), preloadMaxInflight: optionalNumber("preload-max-inflight") }, artifactBucket: value("artifact-bucket"), imageDigest: value("image-digest"), writeAuthorization: $("write-authorization").checked };
 }
 
 function runnerOptions(select, values, preferredPattern) {
   const list = Array.isArray(values) ? values.filter(item => item && typeof item === "object") : [];
-  select.replaceChildren(new Option("Select a discovered runner", ""), ...list.map(item => { const blocked = incompatibleRunners.has(item.id), option = new Option(`${item.name || "Unnamed"} | ${item.placement || "unknown"} | ${item.remoteControl || "unknown"}${blocked ? " | INCOMPATIBLE: replace or repair" : ""}`, item.id || ""); option.disabled = blocked; return option; }));
-  const preferred = list.find(item => !incompatibleRunners.has(item.id) && preferredPattern.test(item.name || "")); if (preferred) select.value = preferred.id;
+  const previous = new Set(selectedValues(select.id)), required = loadGeneratorCount();
+  select.replaceChildren(...list.map(item => { const blocked = incompatibleRunners.has(item.id), addresses = [item.privateIp || item.privateIpAddress || item.ipAddress, item.publicIp || item.publicIpAddress].filter(Boolean).join(" / ") || "IP pending"; const option = new Option(`${item.name || item.displayName || "Unnamed"} | ${addresses} | ${item.placement || item.availabilityDomain || "unknown"} | ${item.remoteControl || "unknown"}${blocked ? " | INCOMPATIBLE: replace or repair" : ""}`, item.id || ""); option.disabled = blocked; option.selected = previous.has(item.id); return option; }));
+  const compatible = list.filter(item => !incompatibleRunners.has(item.id)), preferred = compatible.find(item => preferredPattern.test(item.name || item.displayName || ""));
+  const chosen = [...select.selectedOptions].filter(option => !option.disabled).slice(0, required);
+  const preferredOption = preferred ? [...select.options].find(option => option.value === preferred.id) : null; if (!chosen.length && preferredOption) { preferredOption.selected = true; chosen.push(preferredOption); }
+  for (const option of select.options) if (!option.disabled && chosen.length < required && option.selected && !chosen.includes(option)) chosen.push(option);
+  for (const option of select.options) if (!option.disabled && chosen.length < required && !option.selected) { option.selected = true; chosen.push(option); }
+  for (const option of select.options) if (!chosen.includes(option)) option.selected = false;
+  updateRunnerSelectionStatus(select.id.replace("-runner", ""));
+}
+function configureRunnerSelects() {
+  for (const id of runnerSelectIds) {
+    const select = $(id), target = id.replace("-runner", ""), label = select.closest("label");
+    select.multiple = true; select.size = 5; select.setAttribute("aria-describedby", `${target}-runner-selection`);
+    const textNode = [...label.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()); if (textNode) textNode.textContent = "";
+    const heading = document.createElement("span"); heading.className = "label-line"; heading.textContent = "Regional load generators"; label.insertBefore(heading, select);
+    const status = document.createElement("small"); status.id = `${target}-runner-selection`; status.className = "runner-selection-status"; select.after(status);
+  }
+}
+function updateRunnerSelectionStatus(target) {
+  const targets = target ? [target] : ["aws", "adb", "ndcs"], required = loadGeneratorCount();
+  for (const name of targets) {
+    const status = $(`${name}-runner-selection`); if (!status) continue;
+    const runners = selectedRunners(`${name}-runner`), identities = runners.map(item => `${item.name || item.displayName || compactResourceId(item.id)} (${runnerAddress(item)})`);
+    status.classList.toggle("invalid", runners.length !== required);
+    status.textContent = `${runners.length} of ${required} selected${identities.length ? ` · ${identities.join(", ")}` : ""}`;
+  }
+}
+function synchronizeRunnerCounts() {
+  const required = loadGeneratorCount();
+  for (const id of runnerSelectIds) {
+    const select = $(id), chosen = [...select.selectedOptions].filter(option => !option.disabled).slice(0, required);
+    for (const option of select.options) if (!option.disabled && chosen.length < required && !chosen.includes(option)) chosen.push(option);
+    for (const option of select.options) option.selected = chosen.includes(option);
+  }
+  updateRunnerSelectionStatus(); renderDestinationSummary(); renderDestinationDetails(); scheduleDraftSave();
 }
 function flagIncompatibleRunner(run) {
   if (run.status !== "failed" || !/ocarun user requires passwordless access to Podman/i.test(run.error || "")) return;
@@ -413,7 +517,7 @@ function lookupOptions(select, items, { label = item => item?.name || item, getV
 }
 
 function syncManual(prefix) { $(`${prefix}-manual-wrap`).hidden = value(prefix) !== "__manual__"; }
-function filterOptions(input) { const select = $(input.dataset.filterFor), query = input.value.trim().toLowerCase(); if (!select) return; for (const option of select.options) option.hidden = Boolean(query) && option.value !== select.value && !option.textContent.toLowerCase().includes(query); }
+function filterOptions(input) { const select = $(input.dataset.filterFor), query = input.value.trim().toLowerCase(), selected = new Set(selectedValues(select.id)); if (!select) return; for (const option of select.options) option.hidden = Boolean(query) && !selected.has(option.value) && !option.textContent.toLowerCase().includes(query); }
 function bytes(value, fallback = "Not exposed by provider inventory") { if (value == null) return fallback; const units = ["B", "KB", "MB", "GB", "TB"]; let amount = Number(value), unit = 0; while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; } return `${number(amount)} ${units[unit]}`; }
 function autoscalingLabel(table) {
   if (table?.billingMode === "PAY_PER_REQUEST") return "On-demand / service managed";
@@ -524,31 +628,58 @@ function autoDiscoverActiveTarget() {
 }
 
 function renderReview() {
-  const spec = specification(); const targets = Object.entries(spec.targets).filter(([, target]) => target.enabled).map(([name, target]) => `${name.toUpperCase()} (${target.profile || "no profile"}, ${target.region})`);
-  const repetitions = Object.values(spec.presetRepetitions).reduce((sum, count) => sum + count, 0), cards = [["Targets", targets.join("; ") || "None"], ["Infrastructure", spec.infrastructure.mode], ["Workloads", `${spec.configs.length} preset(s), ${repetitions} session(s)`], ["Execution", `${spec.execution.mode}; immutable parameters`], ["Preset values", "Configured independently in the workload matrix"]];
+  const spec = specification(), enabled = Object.entries(spec.targets).filter(([, target]) => target.enabled); const targets = enabled.map(([name, target]) => `${name.toUpperCase()} (${target.profile || "no profile"}, ${target.region})`), sources = enabled.map(([name, target]) => `${name.toUpperCase()}: ${target.runners.map(runner => `${runner.displayName || compactResourceId(runner.id)} @ ${[runner.privateIp, runner.publicIp].filter(Boolean).join(" / ") || "IP pending"}`).join(", ") || "none"}`);
+  const repetitions = Object.values(spec.presetRepetitions).reduce((sum, count) => sum + count, 0), cards = [["Targets", targets.join("; ") || "None"], ["Load generators", `${spec.execution.loadGeneratorCount} per target · ${spec.execution.loadGeneratorCount * enabled.length} source VM selection(s)`], ["Source identities", sources.join("; ") || "None"], ["Infrastructure", spec.infrastructure.mode], ["Workloads", `${spec.configs.length} preset(s), ${repetitions} session(s)`], ["Execution", `${spec.execution.mode}; immutable parameters`], ["Preset values", "Configured independently in the workload matrix"]];
   $("review-summary").innerHTML = cards.map(([label, item]) => `<div class="summary-card"><span>${escapeHtml(label)}</span><b>${escapeHtml(item)}</b></div>`).join("");
+}
+function validateRunnerSelections(spec) {
+  const required = spec.execution.loadGeneratorCount;
+  for (const [name, target] of Object.entries(spec.targets).filter(([, item]) => item.enabled)) {
+    const distinct = new Set(target.runnerIds || []);
+    if (distinct.size !== required) throw new Error(`${name.toUpperCase()} requires exactly ${required} distinct load-generator VM${required === 1 ? "" : "s"}; ${distinct.size} selected`);
+  }
 }
 
 function setRunLock(locked) {
   runLocked = Boolean(locked);
-  document.querySelectorAll("[data-go-step]").forEach((button, index) => { button.disabled = runLocked && index < 4; });
+  document.querySelectorAll("[data-go-step]").forEach(button => { button.disabled = runLocked; });
   for (const id of ["preview-button", "start-smoke", "start-benchmark", "write-authorization"]) {
     $(id).disabled = runLocked;
     $(id).setAttribute("aria-disabled", String(runLocked));
   }
   $("download").disabled = runLocked || !lastSpec;
   document.querySelector(".stepper").classList.toggle("run-locked", runLocked);
-  if (runLocked && currentStep !== 5) showStep(5);
+  $("new-benchmark").disabled = runLocked; $("new-benchmark").setAttribute("aria-disabled", String(runLocked));
+  $("cancel-benchmark").disabled = runLocked;
+  if (runLocked) showOperations();
 }
 
 function showStep(step) {
-  if (runLocked && Number(step) !== 5) return;
+  if (runLocked) { showOperations(); return; }
+  wizardActive = true; document.body.dataset.workspace = "wizard"; $("operations-dashboard").hidden = true; $("wizard-heading").hidden = false; document.querySelector(".stepper").hidden = false; $("wizard-heading").scrollIntoView({ block: "start" });
   currentStep = Math.max(1, Math.min(5, step)); document.querySelectorAll(".wizard-panel").forEach(panel => { panel.hidden = Number(panel.dataset.step) !== currentStep; });
   document.querySelectorAll(".stepper li").forEach((item, index) => { item.classList.toggle("active", index + 1 === currentStep); item.classList.toggle("done", index + 1 < currentStep); });
-  $("back").disabled = runLocked || currentStep === 1; $("next").hidden = runLocked || currentStep === 5; $("step-label").textContent = runLocked ? "Active run monitor" : `Step ${currentStep} of 5`;
-  if (currentStep === 5 && !runLocked && !suppressPreview) { renderReview(); void preview(); }
+  $("back").disabled = currentStep === 1; $("next").hidden = currentStep === 5; $("step-label").textContent = `Step ${currentStep} of 5`;
+  if (currentStep === 5 && !suppressPreview) { renderReview(); void preview(); }
   window.scrollTo({ top: 0, behavior: "smooth" });
   scheduleDraftSave();
+}
+function showOperations() {
+  wizardActive = false; document.body.dataset.workspace = "operations"; $("operations-dashboard").hidden = false; $("wizard-heading").hidden = true; document.querySelector(".stepper").hidden = true; document.querySelectorAll(".wizard-panel").forEach(panel => { panel.hidden = true; }); document.querySelector(".wizard-actions").hidden = true;
+  $("operations-dashboard").scrollIntoView({ block: "start" });
+}
+function beginNewBenchmark() {
+  if (runLocked) return;
+  document.querySelector(".wizard-actions").hidden = false; showStep(1);
+}
+function initializeWorkspaceShell() {
+  const operations = $("operations-dashboard"), history = $("run-history-title")?.closest(".run-browser"), review = document.querySelector('.wizard-panel[data-step="5"]');
+  if (history && review) {
+    const nodes = [history, history.nextElementSibling, $("run-overview"), $("smoke-status"), $("session-status"), $("pipeline"), $("stage-browser"), $("live-stats"), $("execution-log")?.closest(".execution-console"), $("live-chart-panel"), $("stop-run")?.closest(".actions"), $("smoke-detail")?.closest(".technical-details")];
+    for (const node of nodes) if (node && node !== operations && node.parentElement === review) operations.append(node);
+    review.querySelector("hr")?.remove();
+  }
+  configureRunnerSelects(); showOperations();
 }
 
 function showPreview(preview) {
@@ -556,13 +687,13 @@ function showPreview(preview) {
   $("preview-status").className = `callout${preview.warnings?.length ? " warning" : ""}`; $("preview-status").innerHTML = `<b>Valid immutable preview.</b> Infrastructure: ${escapeHtml(preview.infrastructure.mode)}. No cloud mutation was performed.${warnings}`;
   const values = [["Synchronized workload sessions", preview.totals.tripletSessions], ["Target executions", preview.totals.targetExecutions], ["Scheduled operations", preview.totals.totalScheduledOperations], ["Database minutes", preview.totals.totalDatabaseMinutes]];
   $("totals").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join("");
-  $("matrix").innerHTML = preview.rows.map(row => `<tr><td>${escapeHtml(row.id)}</td><td>${escapeHtml(row.configFile)}</td><td>${escapeHtml(row.loadModel)}</td><td>${row.readPercent}/${row.writePercent}</td><td>${escapeHtml(row.consistency)}</td><td>${number(row.durationSeconds)} s</td><td>${number(row.scheduledOperationsPerTarget)}</td><td>${number(row.averageScheduledOperationsPerSecond)}</td><td>${escapeHtml(row.targets.join(", "))}</td><td><code>${escapeHtml(row.configSha256.slice(0, 12))}...</code></td></tr>`).join("");
+  $("matrix").innerHTML = preview.rows.map(row => `<tr><td>${escapeHtml(row.id)}</td><td>${escapeHtml(row.configFile)}</td><td>${escapeHtml(row.loadModel)}</td><td>${row.readPercent}/${row.writePercent}</td><td>${escapeHtml(row.consistency)}</td><td>${number(row.durationSeconds)} s</td><td>${number(row.payloadBytes)} B payload<br><small>${number(row.logicalItemBytes)} B logical max</small></td><td>${number(row.scheduledOperationsPerTarget)}</td><td>${number(row.averageScheduledOperationsPerSecond)}</td><td>${escapeHtml(row.targets.join(", "))}</td><td><code>${escapeHtml(row.configSha256.slice(0, 12))}...</code></td></tr>`).join("");
   $("download").disabled = false;
 }
 
 async function preview() {
   if (!bootstrap) return;
-  try { lastSpec = specification(); renderReview(); const response = await fetch("/api/preview", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(lastSpec) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || `Preview failed (${response.status})`); showPreview(result); }
+  try { lastSpec = specification(); validateRunnerSelections(lastSpec); renderReview(); const response = await fetch("/api/preview", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(lastSpec) }); const result = await response.json(); if (!response.ok) throw new Error(result.error || `Preview failed (${response.status})`); showPreview(result); }
   catch (error) { $("preview-status").className = "callout error"; $("preview-status").textContent = error.message; $("download").disabled = true; }
 }
 
@@ -570,7 +701,7 @@ function downloadSpec() { const blob = new Blob([`${JSON.stringify(lastSpec, nul
 
 const chartColors = { aws: "#ef7d00", adb: "#7b3fc6", ndcs: "#008c95", offered: "#3f4b5f" };
 function enabledSeries() { return new Set([...document.querySelectorAll('#live-series-controls input:checked')].map(input => input.value)); }
-function drawChart(canvas, series, emptyText) {
+function drawChart(canvas, series, emptyText, timelineLabel = null) {
   const context = canvas.getContext("2d"), width = canvas.width, height = canvas.height, margin = { left: 54, right: 18, top: 16, bottom: 34 };
   context.clearRect(0, 0, width, height); context.fillStyle = "#0b1017"; context.fillRect(0, 0, width, height);
   const active = series.filter(item => enabledSeries().has(item.name) && item.values.some(value => Number.isFinite(value)));
@@ -579,7 +710,7 @@ function drawChart(canvas, series, emptyText) {
   context.strokeStyle = "#26303d"; context.fillStyle = "#7f8c9d"; context.font = "11px ui-monospace, monospace"; context.textAlign = "right";
   for (let tick = 0; tick <= 4; tick += 1) { const y = margin.top + (height - margin.top - margin.bottom) * tick / 4; context.beginPath(); context.moveTo(margin.left, y); context.lineTo(width - margin.right, y); context.stroke(); context.fillText(number(maximum * (4 - tick) / 4), margin.left - 8, y + 4); }
   for (const item of active) { context.strokeStyle = chartColors[item.name]; context.lineWidth = item.name === "offered" ? 2 : 3; context.setLineDash(item.name === "offered" ? [8, 5] : []); context.beginPath(); item.values.forEach((value, index) => { if (!Number.isFinite(value)) return; const x = margin.left + (width - margin.left - margin.right) * index / (points - 1), y = height - margin.bottom - (height - margin.top - margin.bottom) * value / maximum; if (index === 0) context.moveTo(x, y); else context.lineTo(x, y); }); context.stroke(); }
-  context.setLineDash([]); context.fillStyle = "#68758a"; context.textAlign = "center"; context.fillText(`0 s`, margin.left, height - 10); context.fillText(`${Math.max(0, liveChartSamples.length - 1)} samples`, width - margin.right, height - 10);
+  context.setLineDash([]); context.fillStyle = "#68758a"; context.textAlign = "center"; context.fillText(`0 s`, margin.left, height - 10); context.fillText(timelineLabel || `${Math.max(0, liveChartSamples.length - 1)} samples`, width - margin.right, height - 10);
 }
 function offeredAt(run, at) {
   const schedule = run.currentSession?.properties?.loadSchedule;
@@ -598,18 +729,24 @@ function observedLiveRate(target, metric, run) {
 function hydrateLiveSamples(run) {
   const sessionId = run.currentSession?.id; if (!sessionId || (liveChartSession === sessionId && liveChartSamples.length)) return;
   liveChartSession = sessionId; const samples = new Map();
+  for (const runnerSample of run.runnerMetricSamples || []) {
+    const sample = samples.get(runnerSample.at) || { at: runnerSample.at, offered: offeredAt(run, runnerSample.at) };
+    for (const [target, runner] of Object.entries(runnerSample.targets || {})) sample[target] = { ...(sample[target] || {}), at: runnerSample.at, runner };
+    samples.set(runnerSample.at, sample);
+  }
   for (const entry of run.logs || []) {
     if (entry.stage !== "workload" || !["aws", "adb", "ndcs"].includes(entry.target)) continue;
     const match = String(entry.message).match(/([\d,]+)\/([\d,]+) completed; ([\d.]+) ops\/s; p95 ([\d.-]+) ms; ([\d,]+) failed/);
     if (!match) continue;
     const at = entry.at, sample = samples.get(at) || { at, offered: offeredAt(run, at) };
-    sample[entry.target] = { completed: Number(match[1].replaceAll(",", "")), scheduled: Number(match[2].replaceAll(",", "")), operationsPerSecond: Number(match[3]), rollingP95Ms: match[4] === "-" ? null : Number(match[4]), failed: Number(match[5].replaceAll(",", "")) }; samples.set(at, sample);
+    sample[entry.target] = { ...(sample[entry.target] || {}), completed: Number(match[1].replaceAll(",", "")), scheduled: Number(match[2].replaceAll(",", "")), operationsPerSecond: Number(match[3]), rollingP95Ms: match[4] === "-" ? null : Number(match[4]), failed: Number(match[5].replaceAll(",", "")) }; samples.set(at, sample);
   }
   liveChartSamples = [...samples.values()].sort((left, right) => left.at.localeCompare(right.at)).slice(-600);
   for (const target of ["aws", "adb", "ndcs"]) {
     let prior = null;
     for (const sample of liveChartSamples) {
       const metric = sample[target]; if (!metric) continue;
+      if (metric.completed == null && metric.failed == null) { metric.operationsPerSecond = null; continue; }
       const fromAt = prior?.at || run.sharedStartAt, fromCount = prior ? accounted(prior) : 0, seconds = (new Date(metric.at || sample.at).getTime() - new Date(fromAt).getTime()) / 1000;
       metric.operationsPerSecond = Number.isFinite(seconds) && seconds > 0 ? Math.max(0, (accounted(metric) - fromCount) / seconds) : 0;
       metric.at ||= sample.at; prior = metric;
@@ -620,6 +757,12 @@ function renderLiveCharts() {
   const targets = ["aws", "adb", "ndcs"];
   drawChart($("throughput-chart"), [...targets.map(name => ({ name, values: liveChartSamples.map(sample => sample[name]?.operationsPerSecond) })), { name: "offered", values: liveChartSamples.map(sample => sample.offered) }], "Waiting for throughput samples...");
   drawChart($("latency-chart"), targets.map(name => ({ name, values: liveChartSamples.map(sample => sample[name]?.rollingP95Ms) })), "Waiting for latency samples...");
+  const liveRunner = (key, transform = value => value) => targets.map(name => ({ name, values: liveChartSamples.map(sample => { const runner = sample[name]?.runner; if (!runner?.available) return null; if (key === "network") return transform(Number(runner.networkReceiveBytesPerSecond || 0) + Number(runner.networkTransmitBytesPerSecond || 0)); return transform(Number(runner[key])); }) }));
+  if ($("runner-cpu-chart")) drawChart($("runner-cpu-chart"), liveRunner("cpuUtilizationPercent"), "Waiting for runner CPU samples...");
+  if ($("runner-memory-chart")) drawChart($("runner-memory-chart"), liveRunner("memoryUtilizationPercent"), "Waiting for runner memory samples...");
+  if ($("runner-load-chart")) drawChart($("runner-load-chart"), liveRunner("loadAverage1m"), "Waiting for runner load samples...");
+  if ($("runner-network-chart")) drawChart($("runner-network-chart"), liveRunner("network", value => value * 8 / 1_000_000), "Waiting for runner network samples...");
+  if (stageChartSession && stageChartResult) renderOfferedLoadStageCharts(stageChartSession, stageChartResult);
 }
 function syncLiveChartVisibility() {
   const live = runMode() === "live";
@@ -660,14 +803,13 @@ function showSmoke(run) {
   const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", session = run.currentSession, targetMetrics = run.targetMetrics || {};
   renderRunOverview(run); renderStageBrowser(run);
   const accounting = cloud ? ` | ${session ? `session ${escapeHtml(session.id)} (${session.index}/${session.total}) | ` : ""}shared T0 ${escapeHtml(run.sharedStartAt || "pending")}` : ` | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted`;
-  const running = ["queued", "running"].includes(run.status), statusIndicator = running ? '<span class="run-light" aria-hidden="true"></span>' : "";
-  $("smoke-status").className = `callout run-status ${run.status}${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `${statusIndicator}<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
+  $("smoke-status").className = `callout run-status ${run.status}${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
   const matrixSession = session ? (run.matrix || []).find(item => item.id === session.id) : null, profileMetadata = matrixSession ? bootstrap?.configs?.find(item => item.file === matrixSession.configFile) : null;
   const sessionStatus = $("session-status"), properties = session?.properties || matrixSession || {};
   sessionStatus.classList.toggle("hidden", !session);
   if (session) {
     const schedule = Array.isArray(properties.loadSchedule) && properties.loadSchedule.length ? properties.loadSchedule.map(step => `${number(step.operationsPerSecond)} ops/s × ${number(step.seconds)} s`).join(" → ") : properties.fixedConcurrency ? `${number(properties.fixedConcurrency)} workers` : profileMetadata?.loadSummary || "Profile-defined";
-    const detail = [["Read / write", `${number(properties.readPercent)}% / ${number(properties.writePercent)}%`], ["Consistency", properties.consistency], ["Load", `${properties.loadModel || "-"} · ${properties.executionMode || "-"}`], ["Schedule / concurrency", schedule], ["Duration", `${number(session.durationSeconds)} s`], ["Operations / target", number(properties.scheduledOperationsPerTarget)], ["Average offered", `${number(properties.averageScheduledOperationsPerSecond ?? session.offeredOperationsPerSecond)} ops/s`], ["Max in-flight", number(properties.maxInflight)], ["Attempts / request", number(properties.maxAttempts)], ["Request timeout", `${number(properties.requestTimeoutMs)} ms`], ["Dataset", `${number(properties.keyCount)} keys · ${number(properties.payloadBytes)} bytes`], ["Repetition", `${number(session.repetition)} · ${number(session.index)} of ${number(session.total)}`], ["Shared T0", run.sharedStartAt || "pending"]];
+    const detail = [["Read / write", `${number(properties.readPercent)}% / ${number(properties.writePercent)}%`], ["Consistency", properties.consistency], ["Load", `${properties.loadModel || "-"} · ${properties.executionMode || "-"}`], ["Schedule / concurrency", schedule], ["Duration", `${number(session.durationSeconds)} s`], ["Operations / target", number(properties.scheduledOperationsPerTarget)], ["Average offered", `${number(properties.averageScheduledOperationsPerSecond ?? session.offeredOperationsPerSecond)} ops/s`], ["Load generators", `${number(properties.loadGeneratorCount ?? session.loadGeneratorCount ?? run.loadGeneratorCount)} per target`], ["Max in-flight", number(properties.maxInflight)], ["Attempts / request", number(properties.maxAttempts)], ["Request timeout", `${number(properties.requestTimeoutMs)} ms`], ["Dataset", `${number(properties.keyCount)} keys`], ["Item size", `${number(properties.payloadBytes)} B payload · ${number(properties.logicalItemBytes)} B logical max`], ["Repetition", `${number(session.repetition)} · ${number(session.index)} of ${number(session.total)}`], ["Shared T0", run.sharedStartAt || "pending"]];
     const targetProgress = Object.values(targetMetrics).filter(metric => Number(metric.scheduled) > 0).map(metric => (Number(metric.completed || 0) + Number(metric.failed || 0)) * 100 / Number(metric.scheduled));
     const sessionPercent = targetProgress.length ? targetProgress.reduce((sum, item) => sum + item, 0) / targetProgress.length : 0;
     const matrixPercent = session.total ? (Number(run.sessionResults?.length || 0) + sessionPercent / 100) * 100 / session.total : 0;
@@ -706,7 +848,7 @@ async function startSmoke() {
 async function startCloud() {
   if (runLocked) return;
   $("start-smoke").disabled = true; $("start-benchmark").disabled = true; $("download-output").classList.add("hidden"); $("smoke-status").className = "callout"; $("smoke-status").textContent = "Submitting cloud acceptance pipeline...";
-  try { const spec = specification(); const response = await fetch("/api/cloud-acceptance", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(spec) }); const run = await response.json(); if (response.status === 409 && run.active) { localStorage.setItem("kvs-dashboard-run-id", run.active.id); showStep(5); showSmoke(run.active); await monitorRun(run.active.id, run.active.mode || "async"); return; } if (!response.ok) throw new Error(run.error || `Start failed (${response.status})`); localStorage.setItem("kvs-dashboard-run-id", run.id); showSmoke(run); await monitorRun(run.id, runMode()); }
+  try { const spec = specification(); validateRunnerSelections(spec); const response = await fetch("/api/cloud-acceptance", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(spec) }); const run = await response.json(); if (response.status === 409 && run.active) { localStorage.setItem("kvs-dashboard-run-id", run.active.id); showOperations(); showSmoke(run.active); await monitorRun(run.active.id, run.active.mode || "async"); return; } if (!response.ok) throw new Error(run.error || `Start failed (${response.status})`); localStorage.setItem("kvs-dashboard-run-id", run.id); showSmoke(run); await monitorRun(run.id, runMode()); }
   catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("start-smoke").disabled = false; $("start-benchmark").disabled = false; }
 }
 
@@ -724,7 +866,7 @@ async function resumeRun() {
     const response = await fetch(`/api/runs/${encodeURIComponent(terminalRunId)}/resume`, { method: "POST", headers: { "x-kvs-csrf": bootstrap.csrfToken } });
     const run = await response.json();
     if (!response.ok) throw new Error(run.error || `Resume failed (${response.status})`);
-    localStorage.setItem("kvs-dashboard-run-id", run.id); showStep(5); showSmoke(run); await monitorRun(run.id, run.mode || "async");
+    localStorage.setItem("kvs-dashboard-run-id", run.id); showOperations(); showSmoke(run); await monitorRun(run.id, run.mode || "async");
   } catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("resume-run").disabled = false; }
 }
 
@@ -735,6 +877,9 @@ $("add-destination").addEventListener("click", async () => { try { await addDest
 $("destination-summary").addEventListener("click", event => { const button = event.target.closest("[data-remove-destination]"); if (!button) return; selectedTargets.delete(button.dataset.removeDestination); $(`${button.dataset.removeDestination}-enabled`).checked = false; renderDestinationSummary(); renderDestinationDetails(); scheduleDraftSave(); });
 document.querySelectorAll("[data-go-step]").forEach(button => button.addEventListener("click", () => showStep(Number(button.dataset.goStep))));
 $("back").addEventListener("click", () => showStep(currentStep - 1)); $("next").addEventListener("click", () => showStep(currentStep + 1));
+$("new-benchmark").addEventListener("click", beginNewBenchmark); $("cancel-benchmark").addEventListener("click", showOperations);
+$("load-generator-count").addEventListener("change", synchronizeRunnerCounts);
+for (const id of runnerSelectIds) $(id).addEventListener("change", () => { updateRunnerSelectionStatus(id.replace("-runner", "")); renderDestinationDetails(); scheduleDraftSave(); });
 for (const prefix of ["aws-table", "adb-table", "ndcs-table"]) $(prefix).addEventListener("change", () => { syncManual(prefix); renderDestinationDetails(); });
 $("adb-table-manual").addEventListener("input", () => localStorage.setItem("kvs-dashboard-adb-table", value("adb-table-manual")));
 document.querySelectorAll(".option-search").forEach(input => input.addEventListener("input", () => filterOptions(input)));
@@ -763,4 +908,4 @@ $("refresh-run-history").addEventListener("click", () => refreshRunHistory({ pre
 $("run-history-status").addEventListener("change", () => { renderRunHistoryList({ preserveSelection: false }); if ($("run-history-select").value) void showHistoricalRun($("run-history-select").value); else $("run-history-detail").classList.add("hidden"); });
 $("run-history-select").addEventListener("change", () => { renderRunHistoryList({ preserveSelection: true }); void showHistoricalRun($("run-history-select").value); });
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
-syncDestinationProducts(); renderDestinationSummary(); syncLiveChartVisibility(); showStep(1); load().catch(showLoadError);
+initializeWorkspaceShell(); syncDestinationProducts(); renderDestinationSummary(); syncLiveChartVisibility(); load().catch(showLoadError);

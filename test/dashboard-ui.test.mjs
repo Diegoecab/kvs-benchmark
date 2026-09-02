@@ -13,7 +13,8 @@ const pipeline = fs.readFileSync(path.join(root, "src", "dashboard", "public", "
 test("dashboard exposes a five-step wizard with contextual workload help", () => {
   assert.equal((html.match(/class="wizard-panel"/g) || []).length, 5);
   assert.ok((html.match(/class="info"/g) || []).length >= 3);
-  assert.match(html, /Review and run/);
+  assert.match(html, /Benchmark operations/); assert.match(html, /Review and launch/);
+  assert.match(html, /id="new-benchmark"/); assert.match(html, /id="cancel-benchmark"/); assert.match(app, /function initializeWorkspaceShell/); assert.match(app, /function showOperations/);
   assert.match(app, /showStep\(currentStep \+ 1\)/);
   assert.match(html, /class="table-wrap preset-table"/);
   assert.doesNotMatch(html, /Custom runtime overrides/);
@@ -36,6 +37,8 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /id="cloud-aws"/); assert.match(html, /id="cloud-oci"/);
   assert.match(html, /No SSH, SCP, private key, or public IP is used/);
   assert.match(html, /Execution performance/); assert.match(app, /function renderLiveCharts/); assert.match(app, /function hydrateLiveSamples/); assert.match(html, /TARGET COMPARISON/); assert.match(html, /aria-label="Chart series"/); assert.match(html, /series-swatch offered/);
+  assert.match(app, /function renderOfferedLoadStageCharts/); assert.match(app, /function drawStageBarChart/); assert.match(html, /id="offered-stage-panel"/); assert.match(html, /OFFERED-LOAD STAGES/); assert.match(html, /Successful P95 latency/);
+  assert.match(html, /RUNNER VM HEALTH/); assert.match(html, /id="runner-cpu-chart"/); assert.match(html, /id="runner-memory-chart"/); assert.match(app, /function renderRunnerMetricCharts/);
   assert.match(html, /id="execution-log"/); assert.match(html, /id="pause-log"/); assert.match(html, /id="copy-log"/); assert.match(html, /id="clear-log"/);
   assert.match(html, /id="session-status"/);
   assert.match(html, /id="run-overview"/); assert.match(app, /function renderRunOverview/); assert.match(app, /target-overview/);
@@ -46,12 +49,12 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /id="stop-run"/); assert.match(app, /async function stopRun/); assert.match(app, /infrastructure, and collected evidence will be preserved/i);
   assert.match(html, /id="resume-run"/); assert.match(app, /async function resumeRun/); assert.match(app, /verified benchmark checkpoint/i);
   assert.match(app, /CURRENT EXECUTION/); assert.match(app, /Current session/); assert.match(app, /Complete matrix/);
-  assert.match(app, /function setRunLock/); assert.match(app, /Active run monitor/); assert.match(app, /if \(runLocked && Number\(step\) !== 5\) return/);
+  assert.match(app, /function setRunLock/); assert.match(app, /if \(runLocked\) \{ showOperations\(\); return; \}/); assert.match(app, /new-benchmark"\)\.disabled = runLocked/);
   assert.ok((app.match(/if \(runLocked\) return;/g) || []).length >= 2);
   assert.match(app, /setAttribute\("aria-disabled", String\(runLocked\)\)/);
   assert.match(app, /suppressPreview/); assert.match(theme, /Compact terminal workspace/); assert.doesNotMatch(html, /window-controls/);
   assert.match(app, /accountedTotal \* 100 \/ metric\.scheduled/);
-  assert.match(app, /function renderExecutionLog/); assert.match(app, /class="pipeline-track"/); assert.match(app, /aria-valuenow/); assert.match(app, /run-light/);
+  assert.match(app, /function renderExecutionLog/); assert.match(app, /class="pipeline-track"/); assert.match(app, /aria-valuenow/); assert.doesNotMatch(app, /run-light/);
   assert.match(pipeline, /transform:scaleX\(var\(--pipeline-progress,0\)\)/);
   assert.match(pipeline, /\.kvs-run-log-line\{[^}]*background:transparent!important/);
   assert.match(html, /id="draft-status"/); assert.match(html, /id="reset-draft"/); assert.match(app, /kvs-dashboard-draft-v1/); assert.match(app, /function saveDraft/); assert.match(app, /async function restoreDraft/);
@@ -63,6 +66,9 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(app, /function renderRunnerImage/);
   assert.match(html, /theme\.css/); assert.match(theme, /--bg-header: #1a1a2e/); assert.match(theme, /--accent-teal: #0e7a6e/);
   assert.match(theme, /\.target-overview-grid/); assert.match(theme, /\.stage-browser-tabs/); assert.match(theme, /\.load-stage-grid/);
+  assert.match(html, /id="load-generator-count"/); assert.match(html, /same number of distinct runner VMs/i); assert.match(app, /execution: \{ mode: runMode\(\), mutableParameters: false, loadGeneratorCount:/);
+  assert.match(app, /runnerIds/); assert.match(app, /runnerCompartmentIds/); assert.match(app, /runners: runners\.map\(runnerSpec\)/); assert.match(app, /select\.multiple = true/); assert.match(app, /function validateRunnerSelections/);
+  assert.match(html, /<th>Item size<\/th>/); assert.match(app, /logicalItemBytes/);
 });
 
 test("dashboard defaults to async and exposes live progress and package download", () => {

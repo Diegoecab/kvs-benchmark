@@ -52,3 +52,21 @@ test("a client scheduler drop rejects harness integrity", async () => {
   assert.equal(summary.scheduled, 2); assert.equal(summary.accounted, 2); assert.equal(summary.schedulerDrops, 1);
   assert.equal(summary.harnessPassed, false); assert.equal(summary.passed, false);
 });
+
+test("open-loop shards preserve the global sequence and intended schedule", async () => {
+  const sharded = structuredClone(config);
+  sharded.load = { model: "open-loop", schedule: [{ seconds: 0.12, operationsPerSecond: 50 }], maxInflight: 4, telemetryIntervalMs: 5 };
+  const outputs = [0, 1].map(index => fs.mkdtempSync(path.join(os.tmpdir(), `kvs-open-loop-shard-${index}-`)));
+  const provider = { read: async () => ({ readUnits: 1, attempts: 1 }) };
+  const startAt = new Date(Date.now() + 50).toISOString();
+  const summaries = await Promise.all(outputs.map((output, shardIndex) => runOpenLoop({ config: sharded, configSha256: "fixture", provider, target: "mock", table: "mock", output, startAt, shardCount: 2, shardIndex })));
+  const records = outputs.map(output => fs.readFileSync(path.join(output, "operations.ndjson"), "utf8").trim().split(/\r?\n/).filter(Boolean).map(JSON.parse));
+  assert.deepEqual(summaries.map(summary => summary.shard), [{ count: 2, index: 0 }, { count: 2, index: 1 }]);
+  assert.deepEqual(summaries.map(summary => summary.logicalScheduled), [6, 6]);
+  assert.deepEqual(summaries.map(summary => summary.scheduled), [3, 3]);
+  assert.deepEqual(records[0].map(record => record.sequence), [0, 2, 4]);
+  assert.deepEqual(records[1].map(record => record.sequence), [1, 3, 5]);
+  assert.deepEqual(records.flat().sort((left, right) => left.sequence - right.sequence).map(record => record.offsetMs), [0, 20, 40, 60, 80, 100]);
+  assert.ok(records[0][1].scheduledEpochMs - records[0][0].scheduledEpochMs >= 39);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(outputs[1], "run-config.json"), "utf8")).shard, { count: 2, index: 1 });
+});
