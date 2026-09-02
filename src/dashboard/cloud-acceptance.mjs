@@ -11,7 +11,7 @@ import { readRunStates, stateFileName, writeStateAtomic } from "./file-state.mjs
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const configDirectory = path.join(repositoryRoot, "configs");
 const defaultOutput = path.join(repositoryRoot, ".kvs", "cloud-runs");
-const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:b9d4b0539191646a95529be919752e756e1f9815105e4dffb2e2ee6200e87de9";
+const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:0f8c8d29a6475c7a51f4774210fe94dd8fab7d472c62428e9f6b694f355a921e";
 const stages = ["runner-readiness", "resource-validation", "dataset-preload", "dataset-certification", "dataset-hash-match", "t0-scheduled", "workload", "evidence-collection", "acceptance-validation", "package-generation"];
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const safe = (value, pattern, label) => { if (!pattern.test(value || "")) throw new Error(`${label} is invalid`); return value; };
