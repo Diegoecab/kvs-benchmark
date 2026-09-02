@@ -35,8 +35,14 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /private S3 bucket/);
   assert.match(html, /id="cloud-aws"/); assert.match(html, /id="cloud-oci"/);
   assert.match(html, /No SSH, SCP, private key, or public IP is used/);
-  assert.match(html, /Provisional performance timeline/); assert.match(app, /function renderLiveCharts/);
+  assert.match(html, /Execution performance/); assert.match(app, /function renderLiveCharts/); assert.match(app, /function hydrateLiveSamples/); assert.match(html, /TARGET COMPARISON/); assert.match(html, /aria-label="Chart series"/); assert.match(html, /series-swatch offered/);
   assert.match(html, /id="execution-log"/); assert.match(html, /id="pause-log"/); assert.match(html, /id="copy-log"/); assert.match(html, /id="clear-log"/);
+  assert.match(html, /id="session-status"/);
+  assert.match(html, /id="stop-run"/); assert.match(app, /async function stopRun/); assert.match(app, /infrastructure, and collected evidence will be preserved/i);
+  assert.match(app, /CURRENT EXECUTION/); assert.match(app, /Current session/); assert.match(app, /Complete matrix/);
+  assert.match(app, /function setRunLock/); assert.match(app, /Active run monitor/); assert.match(app, /if \(runLocked && Number\(step\) !== 5\) return/);
+  assert.match(app, /suppressPreview/); assert.match(theme, /Compact terminal workspace/); assert.doesNotMatch(html, /window-controls/);
+  assert.match(app, /accounted \* 100 \/ metric\.scheduled/);
   assert.match(app, /function renderExecutionLog/); assert.match(app, /class="pipeline-track"/); assert.match(app, /aria-valuenow/); assert.match(app, /run-light/);
   assert.match(pipeline, /transform:scaleX\(var\(--pipeline-progress,0\)\)/);
   assert.match(pipeline, /\.kvs-run-log-line\{[^}]*background:transparent!important/);

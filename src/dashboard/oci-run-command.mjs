@@ -4,7 +4,7 @@ import path from "node:path";
 
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-export async function executeOciRunCommand({ executeCommand, profile, region, compartmentId, instanceId, script, displayName, controlDirectory, timeoutSeconds = 3600, deliveryTimeoutSeconds = 300, pollIntervalMs = 2000, cliTimeoutMs = 60_000 }) {
+export async function executeOciRunCommand({ executeCommand, profile, region, compartmentId, instanceId, script, displayName, controlDirectory, timeoutSeconds = 3600, deliveryTimeoutSeconds = 300, pollIntervalMs = 2000, cliTimeoutMs = 60_000, onCommandCreated = null }) {
   if (Buffer.byteLength(script) > 4096) throw new Error("OCI Run Command script exceeds the 4 KB inline-source limit");
   fs.mkdirSync(controlDirectory, { recursive: true });
   const suffix = crypto.randomBytes(4).toString("hex"), contentFile = path.join(controlDirectory, `${suffix}-content.json`), targetFile = path.join(controlDirectory, `${suffix}-target.json`);
@@ -19,6 +19,7 @@ export async function executeOciRunCommand({ executeCommand, profile, region, co
     commandId = recovered?.["instance-agent-command-id"] || recovered?.id;
     if (!commandId) throw createError;
   }
+  if (onCommandCreated) await onCommandCreated(commandId);
   const deliveryDeadline = Date.now() + deliveryTimeoutSeconds * 1000;
   let executionDeadline = null;
   let lastStatus = "UNKNOWN";

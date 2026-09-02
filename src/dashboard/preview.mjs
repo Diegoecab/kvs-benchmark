@@ -28,6 +28,14 @@ function selectedTargets(targets = {}) {
   return ["aws", "adb", "ndcs"].filter(target => targets[target]?.enabled).map(target => ({ target, profile: String(targets[target].profile || "").trim(), region: String(targets[target].region || "").trim(), resource: String(targets[target].resource || "").trim() }));
 }
 
+function describeWorkload(row) {
+  const mix = row.readPercent === 100 ? "100% reads" : row.writePercent === 100 ? "100% writes" : `${row.readPercent}% reads / ${row.writePercent}% writes`;
+  const load = row.loadModel === "open-loop"
+    ? `${row.executionMode} open-loop schedule ${row.loadSchedule.map(step => `${step.operationsPerSecond} ops/s for ${step.seconds}s`).join(" → ")}`
+    : row.fixedConcurrency ? `fixed concurrency with ${row.fixedConcurrency} workers` : "profile-defined fixed concurrency";
+  return `${mix}, ${row.consistency} consistency; ${load}; ${row.durationSeconds}s; ${row.scheduledOperationsPerTarget == null ? "duration-bounded operations" : `${row.scheduledOperationsPerTarget} scheduled operations per target`}`;
+}
+
 export function previewMatrix(spec, { configDirectory }) {
   const files = [...new Set(Array.isArray(spec.configs) ? spec.configs : [])];
   if (!files.length) throw new Error("Select at least one workload profile");
@@ -68,7 +76,9 @@ export function previewMatrix(spec, { configDirectory }) {
     for (let repetition = 1; repetition <= repetitionsForPreset; repetition += 1) {
       const durationSeconds = loaded.config.load.durationSeconds || loaded.config.load.schedule?.reduce((sum, step) => sum + step.seconds, 0) || null;
       const scheduledOperationsPerTarget = loaded.config.load.model === "open-loop" ? scheduledOperationCount(loaded.config) : null;
-      rows.push({ id: `${loaded.config.name}-r${repetition}`, configFile: file, configName: loaded.config.name, configSha256: loaded.sha256, repetition, loadModel: loaded.config.load.model, executionMode: loaded.config.load.executionMode || "fixed-concurrency", durationSeconds, consistency: loaded.config.workload.consistency, readPercent: loaded.config.workload.readPercent, writePercent: loaded.config.workload.writePercent, fixedConcurrency: loaded.config.load.fixedConcurrency || null, effectiveOverrides: compatibleOverrides, ignoredOverrides, scheduledOperationsPerTarget, averageScheduledOperationsPerSecond: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget / durationSeconds, averageScheduledOperationsPerMinute: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget * 60 / durationSeconds, targets: targets.map(value => value.target) });
+      const row = { id: `${loaded.config.name}-r${repetition}`, name: loaded.config.name, configFile: file, configName: loaded.config.name, configSha256: loaded.sha256, repetition, loadModel: loaded.config.load.model, executionMode: loaded.config.load.executionMode || "fixed-concurrency", loadSchedule: loaded.config.load.schedule || [], maxInflight: loaded.config.load.maxInflight || null, durationSeconds, consistency: loaded.config.workload.consistency, readPercent: loaded.config.workload.readPercent, writePercent: loaded.config.workload.writePercent, fixedConcurrency: loaded.config.load.fixedConcurrency || null, maxAttempts: loaded.config.client.maxAttempts, requestTimeoutMs: loaded.config.client.requestTimeoutMs, keyCount: loaded.config.dataset.keyCount, payloadBytes: loaded.config.dataset.payloadBytes, effectiveOverrides: compatibleOverrides, ignoredOverrides, scheduledOperationsPerTarget, averageScheduledOperationsPerSecond: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget / durationSeconds, averageScheduledOperationsPerMinute: scheduledOperationsPerTarget == null ? null : scheduledOperationsPerTarget * 60 / durationSeconds, targets: targets.map(value => value.target) };
+      row.description = describeWorkload(row);
+      rows.push(row);
     }
   }
   const totalScheduledOperations = rows.reduce((sum, row) => sum + (row.scheduledOperationsPerTarget || 0) * row.targets.length, 0);

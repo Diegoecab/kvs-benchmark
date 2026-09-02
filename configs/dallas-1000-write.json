@@ -7,12 +7,12 @@
     "model": "open-loop",
     "executionMode": "concurrent",
     "schedule": [
-      { "seconds": 180, "operationsPerSecond": 100 },
-      { "seconds": 180, "operationsPerSecond": 200 },
-      { "seconds": 180, "operationsPerSecond": 300 },
-      { "seconds": 180, "operationsPerSecond": 400 },
-      { "seconds": 180, "operationsPerSecond": 500 },
-      { "seconds": 180, "operationsPerSecond": 200 }
+      { "seconds": 60, "operationsPerSecond": 100 },
+      { "seconds": 60, "operationsPerSecond": 200 },
+      { "seconds": 60, "operationsPerSecond": 300 },
+      { "seconds": 60, "operationsPerSecond": 400 },
+      { "seconds": 60, "operationsPerSecond": 500 },
+      { "seconds": 60, "operationsPerSecond": 200 }
     ],
     "maxInflight": 4096,
     "telemetryIntervalMs": 100

@@ -14,6 +14,7 @@ const defaultOutput = path.join(repositoryRoot, ".kvs", "cloud-runs");
 const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:0f8c8d29a6475c7a51f4774210fe94dd8fab7d472c62428e9f6b694f355a921e";
 const stages = ["runner-readiness", "resource-validation", "dataset-preload", "dataset-certification", "dataset-hash-match", "t0-scheduled", "workload", "evidence-collection", "acceptance-validation", "package-generation"];
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const terminalStatuses = new Set(["complete", "failed", "stopped"]);
 const safe = (value, pattern, label) => { if (!pattern.test(value || "")) throw new Error(`${label} is invalid`); return value; };
 const shellQuote = value => `'${String(value).replaceAll("'", `'"'"'`)}'`;
 
@@ -62,7 +63,15 @@ function appendLog(state, { level = "info", stage = "pipeline", target = "contro
   if (state.logs.length > 1000) state.logs.splice(0, state.logs.length - 1000);
 }
 function visible(state) {
-  return { schemaVersion: 1, id: state.id, kind: "cloud-benchmark", mode: state.spec.mode, status: state.status, createdAt: state.createdAt, startedAt: state.startedAt || null, completedAt: state.completedAt || null, stages: state.stages, targetStatus: state.targetStatus, sharedStartAt: state.sharedStartAt || null, preloadStartAt: state.preloadStartAt || null, preloadSummaries: state.preloadSummaries || null, currentSession: state.currentSession || null, matrix: state.spec.matrix, certificates: state.certificates || null, summaries: state.summaries || null, sessionResults: state.sessionResults || [], targetMetrics: state.targetMetrics || {}, logs: state.logs || [], error: state.error || null, output: state.outputRelative, downloadUrl: state.archiveFile ? `/api/runs/${encodeURIComponent(state.id)}/download` : null };
+  return { schemaVersion: 1, id: state.id, kind: "cloud-benchmark", mode: state.spec.mode, status: state.status, canStop: ["queued", "running", "stopping"].includes(state.status) && state.controlOwnerPid === process.pid, createdAt: state.createdAt, startedAt: state.startedAt || null, completedAt: state.completedAt || null, stages: state.stages, targetStatus: state.targetStatus, sharedStartAt: state.sharedStartAt || null, preloadStartAt: state.preloadStartAt || null, preloadSummaries: state.preloadSummaries || null, currentSession: state.currentSession || null, matrix: state.spec.matrix, resourceInventory: state.resourceInventory || null, certificates: state.certificates || null, summaries: state.summaries || null, sessionResults: state.sessionResults || [], targetMetrics: state.targetMetrics || {}, logs: state.logs || [], error: state.error || null, output: state.outputRelative, downloadUrl: state.archiveFile ? `/api/runs/${encodeURIComponent(state.id)}/download` : null };
+}
+
+function resourceInventory(spec, observed = {}) {
+  const inventory = {};
+  if (spec.enabled.includes("aws")) inventory.aws = { region: spec.awsRegion, runnerInstanceId: spec.awsRunner, tableName: spec.awsTable, tableArn: observed.aws?.TableArn || null };
+  if (spec.enabled.includes("adb")) inventory.adb = { region: spec.adbOciRegion, runnerInstanceOcid: spec.adbRunner, autonomousDatabaseOcid: spec.adbDatabaseId || null, tableName: spec.adbTable };
+  if (spec.enabled.includes("ndcs")) inventory.ndcs = { region: spec.ndcsOciRegion, runnerInstanceOcid: spec.ndcsRunner, compartmentOcid: spec.ndcsCompartment, tableName: spec.ndcsTable, tableOcid: observed.ndcs?.id || observed.ndcs?.Id || null };
+  return inventory;
 }
 
 function runtimeArguments(spec, session, { workload = true } = {}) {
@@ -105,23 +114,42 @@ function awsCommands(spec, action, output, startAt, session = spec.matrix[0]) {
 }
 
 export class CliCloudAdapter {
-  constructor({ execute = run } = {}) { this.execute = execute; }
+  constructor({ execute = run } = {}) { this.execute = execute; this.activeCommands = new Map(); }
+  commandKey(spec, target) { return `${spec.runId}:${target}`; }
+  track(spec, target, command) { this.activeCommands.set(this.commandKey(spec, target), command); }
+  untrack(spec, target) { this.activeCommands.delete(this.commandKey(spec, target)); }
   async aws(spec, action, output, startAt, session) {
     const control = path.join(spec.localOutput, "control"); fs.mkdirSync(control, { recursive: true });
     const file = path.join(control, `aws-${action.replaceAll("/", "-")}.json`); fs.writeFileSync(file, `${JSON.stringify({ commands: awsCommands(spec, action, output, startAt, session) })}\n`);
     const commandId = (await this.execute("aws", ["ssm", "send-command", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--instance-ids", spec.awsRunner, "--document-name", "AWS-RunShellScript", "--comment", `${spec.runId}-${action}`, "--parameters", `file://${file.replaceAll("\\", "/")}`, "--query", "Command.CommandId", "--output", "text"])).trim();
-    for (let attempt = 0; attempt < 450; attempt += 1) {
-      const raw = await this.execute("aws", ["ssm", "get-command-invocation", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--command-id", commandId, "--instance-id", spec.awsRunner, "--output", "json"]);
-      const result = JSON.parse(raw); if (["Success", "Failed", "Cancelled", "TimedOut"].includes(result.Status)) { if (result.Status !== "Success") throw new Error(`AWS ${action}: ${result.StandardErrorContent || result.Status}`); return { commandId, stdout: result.StandardOutputContent }; }
-      await sleep(2000);
-    }
-    throw new Error(`AWS ${action} timed out`);
+    this.track(spec, "aws", { provider: "aws", target: "aws", commandId, action });
+    const startDelayMs = startAt ? Math.max(0, new Date(startAt).getTime() - Date.now()) : 0;
+    const workloadMs = action.startsWith("run/") ? Number(session?.durationSeconds || 0) * 1000 : 0;
+    const waitBudgetMs = action === "preflight" ? 10 * 60_000 : startDelayMs + workloadMs + 15 * 60_000;
+    const deadline = Date.now() + waitBudgetMs;
+    try {
+      while (Date.now() < deadline) {
+        const raw = await this.execute("aws", ["ssm", "get-command-invocation", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--command-id", commandId, "--instance-id", spec.awsRunner, "--output", "json"], { timeout: 30_000 });
+        const result = JSON.parse(raw); if (["Success", "Failed", "Cancelled", "TimedOut"].includes(result.Status)) { if (result.Status !== "Success") throw new Error(`AWS ${action}: ${result.StandardErrorContent || result.Status}`); return { commandId, stdout: result.StandardOutputContent }; }
+        await sleep(2000);
+      }
+      throw new Error(`AWS ${action} timed out`);
+    } finally { this.untrack(spec, "aws"); }
   }
   async oci(spec, target, action, output, startAt, session) {
     const control = path.join(spec.localOutput, "control"); fs.mkdirSync(control, { recursive: true });
     const safeAction = action.replaceAll("/", "-"), script = remoteScript(spec, target, action, output, startAt, session);
     const instanceId = target === "adb" ? spec.adbRunner : spec.ndcsRunner, compartmentId = target === "adb" ? spec.adbRunnerCompartment : spec.ndcsRunnerCompartment, profile = target === "adb" ? spec.adbOciProfile : spec.ndcsOciProfile, region = target === "adb" ? spec.adbOciRegion : spec.ndcsOciRegion;
-    return executeOciRunCommand({ executeCommand: this.execute, profile, region, compartmentId, instanceId, script, displayName: `${spec.runId}-${target}-${safeAction}`, controlDirectory: control, timeoutSeconds: action === "preflight" ? 60 : 3600, deliveryTimeoutSeconds: 900 });
+    try {
+      return await executeOciRunCommand({ executeCommand: this.execute, profile, region, compartmentId, instanceId, script, displayName: `${spec.runId}-${target}-${safeAction}`, controlDirectory: control, timeoutSeconds: action === "preflight" ? 60 : 3600, deliveryTimeoutSeconds: 900, onCommandCreated: commandId => this.track(spec, target, { provider: "oci", target, commandId, action }) });
+    } finally { this.untrack(spec, target); }
+  }
+  async cancel(spec) {
+    const commands = [...this.activeCommands.entries()].filter(([key]) => key.startsWith(`${spec.runId}:`));
+    const results = await Promise.allSettled(commands.map(([, command]) => command.provider === "aws"
+      ? this.execute("aws", ["ssm", "cancel-command", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--command-id", command.commandId, "--instance-ids", spec.awsRunner])
+      : this.execute("oci", ["instance-agent", "command", "cancel", "--profile", command.target === "adb" ? spec.adbOciProfile : spec.ndcsOciProfile, "--region", command.target === "adb" ? spec.adbOciRegion : spec.ndcsOciRegion, "--command-id", command.commandId, "--force"])));
+    return { requested: commands.length, rejected: results.filter(item => item.status === "rejected").length };
   }
   async preflight(spec) {
     const tasks = {};
@@ -184,7 +212,8 @@ function packageRun(state) {
   const preloadSection = preloadRows ? `<h2>Canonical preload performance</h2><table><thead><tr><th>Target</th><th>Actual start UTC</th><th>Start skew ms</th><th>Completed</th><th>Failures</th><th>Successful ops/s</th><th>P95 ms</th><th>P99 ms</th><th>Write units</th></tr></thead><tbody>${preloadRows}</tbody></table>` : "";
   const rows = state.sessionResults.flatMap(session => Object.entries(session.summaries).map(([target, value]) => `<tr><td>${session.id}</td><td>${target.toUpperCase()}</td><td>${value.actualStartAt}</td><td>${value.startSkewMs}</td><td>${value.completed}/${value.scheduled}</td><td>${value.successfulServiceLatencyMs?.p95 ?? "-"}</td><td>${value.successfulServiceLatencyMs?.p99 ?? "-"}</td><td>${value.successfulServiceLatencyMs?.max ?? "-"}</td></tr>`)).join("");
   const certificate = Object.values(state.certificates)[0];
-  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><title>KVS cloud benchmark</title><style>body{max-width:1100px;margin:40px auto;font:15px system-ui;color:#172033}table{width:100%;border-collapse:collapse}th,td{padding:9px;border-bottom:1px solid #ddd;text-align:left}.ok{color:#087a55}</style><h1>KVS cloud benchmark</h1><p class="ok"><b>COMPLETE</b> — ${state.sessionResults.length} synchronized matrix session(s) across ${state.spec.enabled.map(value => value.toUpperCase()).join(", ")}.</p><p>Dataset SHA-256: <code>${certificate.observedSha256}</code>.</p><table><thead><tr><th>Session</th><th>Target</th><th>Actual start UTC</th><th>Start skew ms</th><th>Completed</th><th>P95 ms</th><th>P99 ms</th><th>Max ms</th></tr></thead><tbody>${rows}</tbody></table><h2>Evidence</h2><p>The ZIP contains preload records, strong-read dataset certificates, operation-level NDJSON, telemetry, summaries, clock evidence, stage events, and SHA-256 manifest.</p></html>`;
+  const inventory = JSON.stringify(state.resourceInventory || {}, null, 2).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const html = `<!doctype html><html lang="en"><meta charset="utf-8"><title>KVS cloud benchmark</title><style>body{max-width:1100px;margin:40px auto;font:15px system-ui;color:#172033}table{width:100%;border-collapse:collapse}th,td{padding:9px;border-bottom:1px solid #ddd;text-align:left}.ok{color:#087a55}pre{padding:14px;background:#f3f5f7;border-radius:8px;overflow:auto}</style><h1>KVS cloud benchmark</h1><p class="ok"><b>COMPLETE</b> — ${state.sessionResults.length} synchronized matrix session(s) across ${state.spec.enabled.map(value => value.toUpperCase()).join(", ")}.</p><p>Dataset SHA-256: <code>${certificate.observedSha256}</code>.</p><h2>Benchmark resource inventory</h2><pre>${inventory}</pre><table><thead><tr><th>Session</th><th>Target</th><th>Actual start UTC</th><th>Start skew ms</th><th>Completed</th><th>P95 ms</th><th>P99 ms</th><th>Max ms</th></tr></thead><tbody>${rows}</tbody></table><h2>Evidence</h2><p>The ZIP contains preload records, strong-read dataset certificates, operation-level NDJSON, telemetry, summaries, clock evidence, stage events, resource IDs, and SHA-256 manifest.</p></html>`;
   fs.writeFileSync(path.join(state.output, "index.html"), html.replace("<table><thead><tr><th>Session</th>", `${preloadSection}<h2>Workload sessions</h2><table><thead><tr><th>Session</th>`));
   fs.writeFileSync(path.join(state.output, "run-state.json"), `${JSON.stringify(visible(state), null, 2)}\n`);
   fs.writeFileSync(path.join(state.output, "pipeline-log.ndjson"), `${(state.logs || []).map(item => JSON.stringify(item)).join("\n")}\n`);
@@ -197,33 +226,46 @@ function packageRun(state) {
 
 export class CloudAcceptanceRuns {
   constructor({ outputRoot = defaultOutput, adapter = new CliCloudAdapter() } = {}) {
-    this.outputRoot = outputRoot; this.adapter = adapter; this.runs = new Map();
+    this.outputRoot = outputRoot; this.adapter = adapter; this.runs = new Map(); this.ownedRuns = new Set();
     for (const state of readRunStates(outputRoot)) {
-      if (["queued", "running"].includes(state.status)) { state.status = "failed"; state.completedAt = new Date().toISOString(); state.error = "Dashboard restarted while this run was active. Remote commands may require provider-side inspection before retrying."; appendLog(state, { level: "error", message: state.error }); }
       if (state.archiveFile && !fs.existsSync(state.archiveFile)) state.archiveFile = null;
-      this.runs.set(state.id, state); this.persist(state);
+      this.runs.set(state.id, state);
     }
   }
-  persist(state) { writeStateAtomic(state.output, state); }
+  refreshExternal() { for (const state of readRunStates(this.outputRoot)) if (!this.ownedRuns.has(state.id)) { if (state.archiveFile && !fs.existsSync(state.archiveFile)) state.archiveFile = null; this.runs.set(state.id, state); } }
+  persist(state) { state.heartbeatAt = new Date().toISOString(); writeStateAtomic(state.output, state); }
   start(input) {
-    if ([...this.runs.values()].some(run => ["queued", "running"].includes(run.status))) throw new Error("A cloud acceptance run is already active");
+    this.refreshExternal();
+    if ([...this.runs.values()].some(run => ["queued", "running", "stopping"].includes(run.status))) throw new Error("A cloud acceptance run is already active");
     const spec = validate(input), id = `cloud-${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(3).toString("hex")}`, output = path.join(this.outputRoot, id);
     Object.assign(spec, { runId: id, localOutput: output });
-    const state = { id, spec, status: "queued", createdAt: new Date().toISOString(), output, outputRelative: path.relative(repositoryRoot, output).replaceAll("\\", "/"), stages: stages.map(stageView), targetStatus: Object.fromEntries(spec.enabled.map(name => [name, "pending"])), targetMetrics: {}, sessionResults: [], logs: [] };
+    const state = { id, spec, status: "queued", controlOwnerPid: process.pid, createdAt: new Date().toISOString(), output, outputRelative: path.relative(repositoryRoot, output).replaceAll("\\", "/"), stages: stages.map(stageView), targetStatus: Object.fromEntries(spec.enabled.map(name => [name, "pending"])), targetMetrics: {}, sessionResults: [], logs: [] };
     appendLog(state, { message: `Run queued for ${spec.enabled.map(name => name.toUpperCase()).join(", ")}; ${spec.matrix.length} synchronized session(s)` });
-    this.runs.set(id, state); this.persist(state); void this.execute(state); return visible(state);
+    this.runs.set(id, state); this.ownedRuns.add(id); this.persist(state); void this.execute(state); return visible(state);
   }
-  get(id) { const state = this.runs.get(id); if (!state) throw new Error("Cloud run not found"); return visible(state); }
+  get(id) { this.refreshExternal(); const state = this.runs.get(id); if (!state) throw new Error("Cloud run not found"); return visible(state); }
   active() {
-    const state = [...this.runs.values()].find(run => ["queued", "running"].includes(run.status));
+    this.refreshExternal();
+    const state = [...this.runs.values()].find(run => ["queued", "running", "stopping"].includes(run.status));
     return state ? visible(state) : null;
   }
   latest() {
+    this.refreshExternal();
     const state = [...this.runs.values()].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
     return state ? visible(state) : null;
   }
-  download(id) { const state = this.runs.get(id); if (!state?.archiveFile) throw new Error("Cloud benchmark output is not ready"); return state.archiveFile; }
+  download(id) { this.refreshExternal(); const state = this.runs.get(id); if (!state?.archiveFile) throw new Error("Cloud benchmark output is not ready"); return state.archiveFile; }
+  async stop(id) {
+    this.refreshExternal(); const state = this.runs.get(id); if (!state) throw new Error("Cloud run not found");
+    if (terminalStatuses.has(state.status)) return visible(state);
+    if (!this.ownedRuns.has(id) || state.controlOwnerPid !== process.pid) throw new Error("This dashboard is attached read-only; stop the run from its owning controller");
+    state.stopRequestedAt = new Date().toISOString(); state.status = "stopping"; appendLog(state, { level: "warning", message: "Stop requested; cancelling active remote commands without cleanup" }); this.persist(state);
+    const result = typeof this.adapter.cancel === "function" ? await this.adapter.cancel(state.spec) : { requested: 0, rejected: 0 };
+    appendLog(state, { level: result.rejected ? "warning" : "info", message: `Remote cancellation requested for ${result.requested} command(s); ${result.rejected} request(s) failed` }); this.persist(state);
+    return visible(state);
+  }
   async step(state, name, task) {
+    if (state.stopRequestedAt) throw new Error("Run stopped by operator");
     const stage = state.stages.find(item => item.name === name); stage.status = "running"; stage.startedAt = new Date().toISOString();
     appendLog(state, { stage: name, message: "Stage started" }); this.persist(state);
     try { const result = await task(); stage.status = "complete"; stage.completedAt = new Date().toISOString(); stage.detail = typeof result === "string" ? result : result ? JSON.stringify(result).slice(0, 600) : "Passed"; appendLog(state, { level: "success", stage: name, message: stage.detail }); this.persist(state); return result; }
@@ -233,7 +275,7 @@ export class CloudAcceptanceRuns {
     const spec = state.spec; fs.mkdirSync(state.output, { recursive: true }); state.status = "running"; state.startedAt = new Date().toISOString(); appendLog(state, { message: `Pipeline started; evidence path ${state.outputRelative}` }); this.persist(state);
     try {
       await this.step(state, "runner-readiness", () => this.adapter.preflight(spec));
-      await this.step(state, "resource-validation", () => this.adapter.validateResources(spec));
+      await this.step(state, "resource-validation", async () => { const observed = await this.adapter.validateResources(spec); state.resourceInventory = resourceInventory(spec, observed); return observed; });
       await this.step(state, "dataset-preload", async () => {
         state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "preloading"]));
         state.preloadStartAt = spec.capturePreloadMetrics ? new Date(Math.ceil((Date.now() + spec.t0LeadSeconds * 1000) / 10_000) * 10_000).toISOString() : null;
@@ -250,7 +292,7 @@ export class CloudAcceptanceRuns {
       await this.step(state, "t0-scheduled", () => `${spec.matrix.length} synchronized session T0 value(s) will use a ${spec.t0LeadSeconds}s delivery window`);
       await this.step(state, "workload", async () => {
         for (const session of spec.matrix) {
-          state.currentSession = { id: session.id, configFile: session.configFile, repetition: session.repetition, index: state.sessionResults.length + 1, total: spec.matrix.length, offeredOperationsPerSecond: session.averageScheduledOperationsPerSecond, durationSeconds: session.durationSeconds };
+          state.currentSession = { id: session.id, name: session.name || session.configName, description: session.description, configFile: session.configFile, repetition: session.repetition, index: state.sessionResults.length + 1, total: spec.matrix.length, offeredOperationsPerSecond: session.averageScheduledOperationsPerSecond, durationSeconds: session.durationSeconds, properties: { readPercent: session.readPercent, writePercent: session.writePercent, consistency: session.consistency, loadModel: session.loadModel, executionMode: session.executionMode, loadSchedule: session.loadSchedule, fixedConcurrency: session.fixedConcurrency, maxInflight: session.maxInflight, scheduledOperationsPerTarget: session.scheduledOperationsPerTarget, averageScheduledOperationsPerSecond: session.averageScheduledOperationsPerSecond, maxAttempts: session.maxAttempts, requestTimeoutMs: session.requestTimeoutMs, keyCount: session.keyCount, payloadBytes: session.payloadBytes } };
           state.sharedStartAt = new Date(Math.ceil((Date.now() + spec.t0LeadSeconds * 1000) / 10_000) * 10_000).toISOString();
           appendLog(state, { stage: "workload", message: `Session ${state.currentSession.index}/${state.currentSession.total} ${session.id}; T0 ${state.sharedStartAt}; ${session.durationSeconds}s; ${session.averageScheduledOperationsPerSecond} offered ops/s` });
           state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "running"]));
@@ -274,7 +316,7 @@ export class CloudAcceptanceRuns {
           await this.adapter.collect(spec, `run/${session.id}`);
           const summaries = Object.fromEntries(spec.enabled.map(target => [target, readJson(path.join(state.output, "evidence", "run", session.id, target, "summary.json"))]));
           state.summaries = summaries;
-          state.targetMetrics = Object.fromEntries(Object.entries(summaries).map(([target, value]) => [target, { completed: value.completed, failed: value.failed, operationsPerSecond: value.achievedOperationsPerSecond, inFlight: 0, observedMaxInFlight: value.concurrency?.observedAtOperationStart?.max ?? null, latestLatencyMs: value.successfulServiceLatencyMs?.max ?? null, p95: value.successfulServiceLatencyMs?.p95 ?? null, p99: value.successfulServiceLatencyMs?.p99 ?? null, max: value.successfulServiceLatencyMs?.max ?? null, provisional: false }]));
+          state.targetMetrics = Object.fromEntries(Object.entries(summaries).map(([target, value]) => [target, { completed: value.completed, scheduled: value.scheduled, failed: value.failed, operationsPerSecond: value.achievedOperationsPerSecond, inFlight: 0, observedMaxInFlight: value.concurrency?.observedAtOperationStart?.max ?? null, latestLatencyMs: value.successfulServiceLatencyMs?.max ?? null, p95: value.successfulServiceLatencyMs?.p95 ?? null, p99: value.successfulServiceLatencyMs?.p99 ?? null, max: value.successfulServiceLatencyMs?.max ?? null, provisional: false }]));
           state.sessionResults.push({ id: session.id, configFile: session.configFile, repetition: session.repetition, sharedStartAt: state.sharedStartAt, summaries });
           state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "completed"]));
           for (const [target, summary] of Object.entries(summaries)) appendLog(state, { level: summary.failed ? "error" : "success", stage: "workload", target, message: `Session complete; ${summary.completed}/${summary.scheduled} operations; p95 ${summary.successfulServiceLatencyMs?.p95 ?? "-"} ms; p99 ${summary.successfulServiceLatencyMs?.p99 ?? "-"} ms` });
@@ -286,7 +328,7 @@ export class CloudAcceptanceRuns {
       await this.step(state, "acceptance-validation", () => { let maximumStartSkewMs = 0; for (const session of state.sessionResults) { const values = Object.values(session.summaries); if (values.some(value => !value.harnessPassed || value.accounted !== value.scheduled || value.failed !== 0)) throw new Error(`${session.id} failed accounting or service acceptance`); if (new Set(values.map(value => value.configSha256)).size !== 1 || new Set(values.map(value => value.scheduledStartAt)).size !== 1) throw new Error(`${session.id} configuration hash or T0 differs across targets`); maximumStartSkewMs = Math.max(maximumStartSkewMs, ...values.map(value => Math.abs(value.startSkewMs))); } return { sessions: state.sessionResults.length, maximumStartSkewMs }; });
       await this.step(state, "package-generation", () => packageRun(state));
       state.status = "complete"; state.completedAt = new Date().toISOString(); appendLog(state, { level: "success", message: "Benchmark pipeline completed" }); packageRun(state); this.persist(state);
-    } catch (error) { state.status = "failed"; state.error = error.message; state.completedAt = new Date().toISOString(); appendLog(state, { level: "error", message: `Pipeline stopped: ${error.message}` }); this.persist(state); }
+    } catch (error) { const stopped = Boolean(state.stopRequestedAt); state.status = stopped ? "stopped" : "failed"; state.error = stopped ? null : error.message; state.completedAt = new Date().toISOString(); state.targetStatus = Object.fromEntries(Object.keys(state.targetStatus || {}).map(target => [target, state.targetStatus[target] === "completed" ? "completed" : stopped ? "stopped" : "failed"])); appendLog(state, { level: stopped ? "warning" : "error", message: stopped ? "Pipeline stopped by operator; resources and evidence were preserved" : `Pipeline stopped: ${error.message}` }); this.persist(state); }
   }
 }
 

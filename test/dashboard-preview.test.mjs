@@ -22,9 +22,13 @@ test("dashboard previews the complete Dallas matrix with three repetitions", () 
   const configs = ["dallas-1000-strong-read.json", "dallas-1000-mixed-70-30.json", "dallas-1000-mixed-50-50.json", "dallas-1000-write.json"];
   const preview = previewMatrix({ configs, targets, repetitions: 3, infrastructure: { mode: "existing" } }, { configDirectory });
   assert.equal(preview.rows.length, 12);
-  assert.equal(preview.rows.every(row => row.durationSeconds === 1080), true);
-  assert.equal(preview.totals.totalScheduledOperations, 14823000);
-  assert.equal(preview.totals.totalDatabaseMinutes, 648);
+  assert.equal(preview.rows.every(row => row.durationSeconds === 360), true);
+  assert.equal(preview.rows[0].name, "dallas-1000-strong-read");
+  assert.match(preview.rows[0].description, /100% reads, strong consistency/);
+  assert.deepEqual(preview.rows[0].loadSchedule.map(step => step.operationsPerSecond), [100, 200, 300, 400, 500, 200]);
+  assert.equal(preview.rows[0].maxInflight, 4096);
+  assert.equal(preview.totals.totalScheduledOperations, 4941000);
+  assert.equal(preview.totals.totalDatabaseMinutes, 216);
 });
 
 test("dashboard preview makes five-minute operation accounting explicit", () => {

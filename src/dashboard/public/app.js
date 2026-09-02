@@ -7,6 +7,8 @@ const optionalNumber = id => value(id) === "" ? undefined : Number(value(id));
 let bootstrap = null;
 let lastSpec = null;
 let currentStep = 1;
+let runLocked = false;
+let suppressPreview = true;
 let discovered = null;
 let destinations = null;
 let liveChartSession = null;
@@ -94,6 +96,7 @@ async function load() {
   const response = await fetch("/api/bootstrap", { cache: "no-store" });
   if (!response.ok) throw new Error(`Bootstrap failed (${response.status})`);
   bootstrap = await response.json();
+  $("session-status").after($("live-chart-panel"));
   const draft = readDraft();
   profiles($("aws-profile"), bootstrap.profiles.aws, draft?.fields?.["aws-profile"] || "default"); profiles($("adb-profile"), bootstrap.profiles.oci, draft?.fields?.["adb-profile"] || "DEFAULT"); profiles($("ndcs-profile"), bootstrap.profiles.oci, draft?.fields?.["ndcs-profile"] || "DEFAULT");
   $("image-digest").value = bootstrap.defaults.imageDigest || ""; renderRunnerImage();
@@ -113,6 +116,7 @@ async function load() {
     if (restoredRun) showSmoke(restoredRun);
     void monitorRun(runId, restoredRun?.mode || "async", true);
   }
+  suppressPreview = false;
 }
 
 function runMode() { return document.querySelector('input[name="run-mode"]:checked').value; }
@@ -353,11 +357,21 @@ function renderReview() {
   $("review-summary").innerHTML = cards.map(([label, item]) => `<div class="summary-card"><span>${escapeHtml(label)}</span><b>${escapeHtml(item)}</b></div>`).join("");
 }
 
+function setRunLock(locked) {
+  runLocked = Boolean(locked);
+  document.querySelectorAll("[data-go-step]").forEach((button, index) => { button.disabled = runLocked && index < 4; });
+  for (const id of ["preview-button", "start-smoke", "start-benchmark", "write-authorization"]) $(id).disabled = runLocked;
+  $("download").disabled = runLocked || !lastSpec;
+  document.querySelector(".stepper").classList.toggle("run-locked", runLocked);
+  if (runLocked && currentStep !== 5) showStep(5);
+}
+
 function showStep(step) {
+  if (runLocked && Number(step) !== 5) return;
   currentStep = Math.max(1, Math.min(5, step)); document.querySelectorAll(".wizard-panel").forEach(panel => { panel.hidden = Number(panel.dataset.step) !== currentStep; });
   document.querySelectorAll(".stepper li").forEach((item, index) => { item.classList.toggle("active", index + 1 === currentStep); item.classList.toggle("done", index + 1 < currentStep); });
-  $("back").disabled = currentStep === 1; $("next").hidden = currentStep === 5; $("step-label").textContent = `Step ${currentStep} of 5`;
-  if (currentStep === 5) { renderReview(); void preview(); }
+  $("back").disabled = runLocked || currentStep === 1; $("next").hidden = runLocked || currentStep === 5; $("step-label").textContent = runLocked ? "Active run monitor" : `Step ${currentStep} of 5`;
+  if (currentStep === 5 && !runLocked && !suppressPreview) { renderReview(); void preview(); }
   window.scrollTo({ top: 0, behavior: "smooth" });
   scheduleDraftSave();
 }
@@ -383,14 +397,33 @@ const chartColors = { aws: "#ef7d00", adb: "#7b3fc6", ndcs: "#008c95", offered: 
 function enabledSeries() { return new Set([...document.querySelectorAll('#live-series-controls input:checked')].map(input => input.value)); }
 function drawChart(canvas, series, emptyText) {
   const context = canvas.getContext("2d"), width = canvas.width, height = canvas.height, margin = { left: 54, right: 18, top: 16, bottom: 34 };
-  context.clearRect(0, 0, width, height); context.fillStyle = "#fff"; context.fillRect(0, 0, width, height);
+  context.clearRect(0, 0, width, height); context.fillStyle = "#0b1017"; context.fillRect(0, 0, width, height);
   const active = series.filter(item => enabledSeries().has(item.name) && item.values.some(value => Number.isFinite(value)));
-  if (!active.length) { context.fillStyle = "#68758a"; context.font = "14px system-ui"; context.fillText(emptyText, 24, 42); return; }
+  if (!active.length) { context.fillStyle = "#7f8c9d"; context.font = "13px system-ui"; context.fillText(emptyText, 24, 42); return; }
   const maximum = Math.max(1, ...active.flatMap(item => item.values.filter(Number.isFinite))) * 1.1, points = Math.max(2, ...active.map(item => item.values.length));
-  context.strokeStyle = "#dfe5ed"; context.fillStyle = "#68758a"; context.font = "12px system-ui"; context.textAlign = "right";
+  context.strokeStyle = "#26303d"; context.fillStyle = "#7f8c9d"; context.font = "11px ui-monospace, monospace"; context.textAlign = "right";
   for (let tick = 0; tick <= 4; tick += 1) { const y = margin.top + (height - margin.top - margin.bottom) * tick / 4; context.beginPath(); context.moveTo(margin.left, y); context.lineTo(width - margin.right, y); context.stroke(); context.fillText(number(maximum * (4 - tick) / 4), margin.left - 8, y + 4); }
   for (const item of active) { context.strokeStyle = chartColors[item.name]; context.lineWidth = item.name === "offered" ? 2 : 3; context.setLineDash(item.name === "offered" ? [8, 5] : []); context.beginPath(); item.values.forEach((value, index) => { if (!Number.isFinite(value)) return; const x = margin.left + (width - margin.left - margin.right) * index / (points - 1), y = height - margin.bottom - (height - margin.top - margin.bottom) * value / maximum; if (index === 0) context.moveTo(x, y); else context.lineTo(x, y); }); context.stroke(); }
   context.setLineDash([]); context.fillStyle = "#68758a"; context.textAlign = "center"; context.fillText(`0 s`, margin.left, height - 10); context.fillText(`${Math.max(0, liveChartSamples.length - 1)} samples`, width - margin.right, height - 10);
+}
+function offeredAt(run, at) {
+  const schedule = run.currentSession?.properties?.loadSchedule;
+  if (!Array.isArray(schedule) || !run.sharedStartAt) return run.currentSession?.offeredOperationsPerSecond;
+  let elapsed = Math.max(0, (new Date(at).getTime() - new Date(run.sharedStartAt).getTime()) / 1000);
+  for (const step of schedule) { if (elapsed < Number(step.seconds)) return Number(step.operationsPerSecond); elapsed -= Number(step.seconds); }
+  return Number(schedule.at(-1)?.operationsPerSecond);
+}
+function hydrateLiveSamples(run) {
+  const sessionId = run.currentSession?.id; if (!sessionId || (liveChartSession === sessionId && liveChartSamples.length)) return;
+  liveChartSession = sessionId; const samples = new Map();
+  for (const entry of run.logs || []) {
+    if (entry.stage !== "workload" || !["aws", "adb", "ndcs"].includes(entry.target)) continue;
+    const match = String(entry.message).match(/([\d,]+)\/([\d,]+) completed; ([\d.]+) ops\/s; p95 ([\d.-]+) ms; ([\d,]+) failed/);
+    if (!match) continue;
+    const at = entry.at, sample = samples.get(at) || { at, offered: offeredAt(run, at) };
+    sample[entry.target] = { completed: Number(match[1].replaceAll(",", "")), scheduled: Number(match[2].replaceAll(",", "")), operationsPerSecond: Number(match[3]), rollingP95Ms: match[4] === "-" ? null : Number(match[4]), failed: Number(match[5].replaceAll(",", "")) }; samples.set(at, sample);
+  }
+  liveChartSamples = [...samples.values()].sort((left, right) => left.at.localeCompare(right.at)).slice(-600);
 }
 function renderLiveCharts() {
   const targets = ["aws", "adb", "ndcs"];
@@ -430,26 +463,41 @@ function renderExecutionLog(run) {
 }
 
 function showSmoke(run) {
-  const progress = run.progress || {}; const terminal = ["complete", "failed"].includes(run.status); const latency = run.summary?.successfulServiceLatencyMs || {};
-  const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", session = run.currentSession;
+  const progress = run.progress || {}; const terminal = ["complete", "failed", "stopped"].includes(run.status); const latency = run.summary?.successfulServiceLatencyMs || {};
+  setRunLock(!terminal);
+  const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", session = run.currentSession, targetMetrics = run.targetMetrics || {};
   const accounting = cloud ? ` | ${session ? `session ${escapeHtml(session.id)} (${session.index}/${session.total}) | ` : ""}shared T0 ${escapeHtml(run.sharedStartAt || "pending")}` : ` | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted`;
   const running = ["queued", "running"].includes(run.status), statusIndicator = running ? '<span class="run-light" aria-hidden="true"></span>' : "";
   $("smoke-status").className = `callout run-status ${run.status}${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `${statusIndicator}<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
+  const matrixSession = session ? (run.matrix || []).find(item => item.id === session.id) : null, profileMetadata = matrixSession ? bootstrap?.configs?.find(item => item.file === matrixSession.configFile) : null;
+  const sessionStatus = $("session-status"), properties = session?.properties || matrixSession || {};
+  sessionStatus.classList.toggle("hidden", !session);
+  if (session) {
+    const schedule = Array.isArray(properties.loadSchedule) && properties.loadSchedule.length ? properties.loadSchedule.map(step => `${number(step.operationsPerSecond)} ops/s × ${number(step.seconds)} s`).join(" → ") : properties.fixedConcurrency ? `${number(properties.fixedConcurrency)} workers` : profileMetadata?.loadSummary || "Profile-defined";
+    const detail = [["Read / write", `${number(properties.readPercent)}% / ${number(properties.writePercent)}%`], ["Consistency", properties.consistency], ["Load", `${properties.loadModel || "-"} · ${properties.executionMode || "-"}`], ["Schedule / concurrency", schedule], ["Duration", `${number(session.durationSeconds)} s`], ["Operations / target", number(properties.scheduledOperationsPerTarget)], ["Average offered", `${number(properties.averageScheduledOperationsPerSecond ?? session.offeredOperationsPerSecond)} ops/s`], ["Max in-flight", number(properties.maxInflight)], ["Attempts / request", number(properties.maxAttempts)], ["Request timeout", `${number(properties.requestTimeoutMs)} ms`], ["Dataset", `${number(properties.keyCount)} keys · ${number(properties.payloadBytes)} bytes`], ["Repetition", `${number(session.repetition)} · ${number(session.index)} of ${number(session.total)}`], ["Shared T0", run.sharedStartAt || "pending"]];
+    const targetProgress = Object.values(targetMetrics).filter(metric => Number(metric.scheduled) > 0).map(metric => (Number(metric.completed || 0) + Number(metric.failed || 0)) * 100 / Number(metric.scheduled));
+    const sessionPercent = targetProgress.length ? targetProgress.reduce((sum, item) => sum + item, 0) / targetProgress.length : 0;
+    const matrixPercent = session.total ? (Number(run.sessionResults?.length || 0) + sessionPercent / 100) * 100 / session.total : 0;
+    const fallbackDescription = `${number(properties.readPercent)}% reads / ${number(properties.writePercent)}% writes, ${properties.consistency || "-"} consistency; ${properties.loadModel || "-"} · ${properties.executionMode || "-"}; ${schedule}`;
+    const visibleDetail = detail.filter(([, item]) => item != null && !String(item).includes("undefined") && !String(item).startsWith("- "));
+    sessionStatus.innerHTML = `<p class="eyebrow">CURRENT EXECUTION</p><h3>${escapeHtml(session.name || matrixSession?.configName || session.id)}</h3><p>${escapeHtml(session.description || matrixSession?.description || fallbackDescription)}</p><div class="execution-progress"><div><b>Current session</b><span>${number(sessionPercent)}%</span></div><div class="pipeline-track" role="progressbar" aria-label="Current workload session progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${sessionPercent}"><span style="--pipeline-progress:${sessionPercent / 100}"></span></div><div><b>Complete matrix</b><span>${number(matrixPercent)}% · ${number(run.sessionResults?.length || 0)} of ${number(session.total)} sessions finalized</span></div><div class="pipeline-track" role="progressbar" aria-label="Complete benchmark matrix progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${matrixPercent}"><span style="--pipeline-progress:${matrixPercent / 100}"></span></div></div><div class="session-properties">${visibleDetail.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(item)}</b></div>`).join("")}</div>`;
+  }
   const stages = run.stages || [], processed = stages.filter(stage => ["complete", "failed"].includes(stage.status)).length, activeStage = stages.find(stage => stage.status === "running"), failedStage = stages.find(stage => stage.status === "failed"), progressUnits = processed + (activeStage ? 0.5 : 0), percentage = stages.length ? Math.round(progressUnits * 100 / stages.length) : 0, progressLabel = failedStage ? `Stopped at ${failedStage.name.replaceAll("-", " ")}` : activeStage ? `Running ${activeStage.name.replaceAll("-", " ")}` : percentage === 100 ? "All pipeline stages completed" : "Waiting to start";
-  $("pipeline").innerHTML = stages.length ? `<div class="pipeline-summary"><div class="pipeline-progress-heading"><div><b>${percentage}%</b><span>${escapeHtml(progressLabel)}</span></div><small>${processed} of ${stages.length} steps completed</small></div><div class="pipeline-track" role="progressbar" aria-label="Benchmark pipeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="--pipeline-progress:${percentage / 100}"></span></div><ol class="pipeline-steps">${stages.map((stage, index) => { const symbol = stage.status === "complete" ? "✓" : stage.status === "failed" ? "!" : stage.status === "running" ? "●" : String(index + 1); return `<li class="${escapeHtml(stage.status)}" title="${escapeHtml(stage.detail || stage.status)}"><span>${symbol}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b></li>`; }).join("")}</ol></div>` : "";
-  const targetMetrics = run.targetMetrics || {};
-  const showLiveChart = cloud && run.mode === "live"; $("live-chart-panel").classList.toggle("hidden", !showLiveChart); if (showLiveChart) { captureLiveSample(run); if (!session) $("live-chart-caption").textContent = `Waiting for workload · current run status: ${run.status}`; renderLiveCharts(); }
-  if (cloud && Object.keys(targetMetrics).length) $("live-stats").innerHTML = Object.entries(targetMetrics).map(([target, metric]) => `<div class="target-live provider-${escapeHtml(target)}"><h4>${escapeHtml(target.toUpperCase())}${metric.provisional ? " · LIVE PREVIEW" : " · FINAL"}</h4><div class="stats"><div class="stat"><span>Completed</span><b>${number(metric.completed)}</b></div><div class="stat"><span>Failed</span><b>${number(metric.failed)}</b></div><div class="stat"><span>Ops/s</span><b>${number(metric.operationsPerSecond)}</b></div><div class="stat"><span>In flight</span><b>${number(metric.inFlight)}</b></div><div class="stat"><span>Latest latency ms</span><b>${number(metric.latestLatencyMs)}</b></div><div class="stat"><span>${metric.provisional ? "Rolling P95 ms" : "Final P95 ms"}</span><b>${number(metric.rollingP95Ms ?? metric.p95)}</b></div><div class="stat"><span>Final P99 ms</span><b>${number(metric.p99)}</b></div><div class="stat"><span>Final max ms</span><b>${number(metric.max)}</b></div></div></div>`).join("");
+  const pipelineHeadline = failedStage ? `FAILED AT ${failedStage.name.replaceAll("-", " ").toUpperCase()}` : `${percentage}%`;
+  $("pipeline").innerHTML = stages.length ? `<div class="pipeline-summary${failedStage ? " has-failure" : ""}"><div class="pipeline-progress-heading"><div><b>${escapeHtml(pipelineHeadline)}</b><span>${failedStage ? `${percentage}% of gates reached` : escapeHtml(progressLabel)}</span></div><small>${processed} of ${stages.length} gates finalized</small></div><div class="pipeline-track" role="progressbar" aria-label="Benchmark pipeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="--pipeline-progress:${percentage / 100}"></span></div><ol class="pipeline-steps">${stages.map((stage, index) => { const symbol = stage.status === "complete" ? "✓" : stage.status === "failed" ? "!" : stage.status === "running" ? "●" : String(index + 1); return `<li class="${escapeHtml(stage.status)}" title="${escapeHtml(stage.detail || stage.status)}"><span>${symbol}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b></li>`; }).join("")}</ol></div>` : "";
+  const showLiveChart = cloud && Boolean(session || Object.keys(targetMetrics).length); $("live-chart-panel").classList.toggle("hidden", !showLiveChart); if (showLiveChart) { hydrateLiveSamples(run); captureLiveSample(run); $("live-chart-caption").textContent = session ? `${session.id} · compare targets or hide series using the controls` : `Workload comparison · run ${run.status}`; renderLiveCharts(); }
+  if (cloud && Object.keys(targetMetrics).length) $("live-stats").innerHTML = Object.entries(targetMetrics).map(([target, metric]) => { const accounted = Number(metric.completed || 0) + Number(metric.failed || 0), percent = metric.scheduled ? accounted * 100 / metric.scheduled : 0, completion = metric.scheduled ? `${number(accounted)} / ${number(metric.scheduled)}` : number(accounted), provider = { aws: "AWS DynamoDB", adb: "ADB DynamoDB API", ndcs: "OCI NoSQL" }[target] || target.toUpperCase(), values = [["Accounted", completion], ["Failed", number(metric.failed)], ["Throughput", `${number(metric.operationsPerSecond)} ops/s`], ["In flight", number(metric.inFlight)], [metric.provisional ? "Rolling P95" : "Final P95", `${number(metric.rollingP95Ms ?? metric.p95)} ms`], ["Latest latency", `${number(metric.latestLatencyMs)} ms`]]; if (!metric.provisional) values.push(["Final P99", `${number(metric.p99)} ms`], ["Final max", `${number(metric.max)} ms`]); return `<section class="target-live provider-${escapeHtml(target)}"><div class="target-live-heading"><h4>${providerMark(target)}<span>${escapeHtml(provider)}</span></h4><span>${metric.provisional ? "LIVE PREVIEW" : "FINAL"}</span><b>${number(percent)}%</b></div><div class="pipeline-track" role="progressbar" aria-label="${escapeHtml(provider)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="--pipeline-progress:${percent / 100}"></span></div><div class="target-metrics">${values.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(item)}</b></div>`).join("")}</div></section>`; }).join("");
   else { const cloudCompleted = run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.completed, 0) : null; const values = [["Completed", cloudCompleted ?? progress.completed ?? 0], ["Failed", progress.failed ?? (run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.failed, 0) : 0)], ["Current ops/s", progress.achievedOperationsPerSecond ?? run.summary?.achievedOperationsPerSecond], ["In flight", progress.inFlight ?? 0], ["Latest latency ms", progress.latestLatencyMs], ["Final P95 ms", latency.p95]]; $("live-stats").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join(""); }
   renderExecutionLog(run);
   flagIncompatibleRunner(run);
   $("smoke-detail").textContent = JSON.stringify({ kind: run.kind, mode: run.mode, status: run.status, startedAt: run.startedAt, completedAt: run.completedAt, targetStatus: run.targetStatus, certificates: run.certificates, summaries: run.summaries, evidence: run.output, latestOperation: progress.latestOperation, latestError: progress.latestError }, null, 2);
   $("download-output").classList.toggle("hidden", !run.downloadUrl); if (run.downloadUrl) $("download-output").href = run.downloadUrl;
+  $("stop-run").classList.toggle("hidden", terminal || !run.canStop); $("stop-run").disabled = run.status === "stopping";
   $("start-smoke").disabled = !terminal; $("start-benchmark").disabled = !terminal; if (terminal) localStorage.removeItem("kvs-dashboard-run-id");
 }
 
 async function monitorRun(id, mode, restoring = false) {
-  try { let terminal = false; while (!terminal) { const response = await fetch(`/api/runs/${encodeURIComponent(id)}`, { cache: "no-store" }); const run = await response.json(); if (!response.ok) throw new Error(run.error || `Status failed (${response.status})`); showSmoke(run); terminal = ["complete", "failed"].includes(run.status); if (!terminal) await pause(mode === "live" ? 200 : 1000); } }
+  try { let terminal = false; while (!terminal) { const response = await fetch(`/api/runs/${encodeURIComponent(id)}`, { cache: "no-store" }); const run = await response.json(); if (!response.ok) throw new Error(run.error || `Status failed (${response.status})`); showSmoke(run); terminal = ["complete", "failed", "stopped"].includes(run.status); if (!terminal) await pause(mode === "live" ? 200 : 1000); } }
   catch (error) { if (!restoring) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; } localStorage.removeItem("kvs-dashboard-run-id"); $("start-smoke").disabled = false; $("start-benchmark").disabled = false; }
 }
 
@@ -463,6 +511,13 @@ async function startCloud() {
   $("start-smoke").disabled = true; $("start-benchmark").disabled = true; $("download-output").classList.add("hidden"); $("smoke-status").className = "callout"; $("smoke-status").textContent = "Submitting cloud acceptance pipeline...";
   try { const spec = specification(); const response = await fetch("/api/cloud-acceptance", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(spec) }); const run = await response.json(); if (response.status === 409 && run.active) { localStorage.setItem("kvs-dashboard-run-id", run.active.id); showStep(5); showSmoke(run.active); await monitorRun(run.active.id, run.active.mode || "async"); return; } if (!response.ok) throw new Error(run.error || `Start failed (${response.status})`); localStorage.setItem("kvs-dashboard-run-id", run.id); showSmoke(run); await monitorRun(run.id, runMode()); }
   catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("start-smoke").disabled = false; $("start-benchmark").disabled = false; }
+}
+
+async function stopRun() {
+  if (!terminalRunId || !confirm("Stop this benchmark run? Active remote commands will be cancelled. Tables, infrastructure, and collected evidence will be preserved.")) return;
+  $("stop-run").disabled = true;
+  try { const response = await fetch(`/api/runs/${encodeURIComponent(terminalRunId)}/stop`, { method: "POST", headers: { "x-kvs-csrf": bootstrap.csrfToken } }); const run = await response.json(); if (!response.ok) throw new Error(run.error || `Stop failed (${response.status})`); showSmoke(run); }
+  catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("stop-run").disabled = false; }
 }
 
 document.querySelectorAll('input[name="infra-mode"]').forEach(input => input.addEventListener("change", () => $("managed-fields").classList.toggle("hidden", document.querySelector('input[name="infra-mode"]:checked').value !== "managed")));
@@ -494,5 +549,6 @@ $("reset-draft").addEventListener("click", () => { localStorage.removeItem(draft
 document.querySelector("main").addEventListener("input", event => { if (!event.target.matches(".option-search") && event.target.id !== "write-authorization") scheduleDraftSave(); });
 document.querySelector("main").addEventListener("change", event => { if (event.target.id !== "write-authorization") scheduleDraftSave(); });
 $("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-destinations").addEventListener("click", discoverDestinations);
+$("stop-run").addEventListener("click", stopRun);
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
 syncDestinationProducts(); renderDestinationSummary(); syncLiveChartVisibility(); showStep(1); load().catch(showLoadError);

@@ -77,6 +77,11 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
         response.writeHead(200, { "content-type": "application/zip", "content-length": stat.size, "content-disposition": `attachment; filename="${path.basename(file)}"`, "cache-control": "no-store", "x-content-type-options": "nosniff" });
         return fs.createReadStream(file).pipe(response);
       }
+      if (request.method === "POST" && /^\/api\/runs\/[^/]+\/stop$/.test(url.pathname)) {
+        if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
+        const id = decodeURIComponent(url.pathname.split("/")[3]);
+        return json(response, 202, await cloudRuns.stop(id));
+      }
       if (request.method === "GET" && url.pathname.startsWith("/api/runs/")) {
         return json(response, 200, findRun(decodeURIComponent(url.pathname.slice("/api/runs/".length))));
       }

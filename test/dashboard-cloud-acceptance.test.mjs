@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CloudAcceptanceRuns } from "../src/dashboard/cloud-acceptance.mjs";
+import { writeStateAtomic } from "../src/dashboard/file-state.mjs";
 
 const hash = "a".repeat(64);
 const input = {
@@ -54,6 +55,8 @@ test("cloud adapter source remains platform-neutral", () => {
   assert.match(source, /podman pull/);
   assert.match(source, /awk '\/\^\\\\\{\.\*\\\\\}\$\//);
   assert.doesNotMatch(source, /completed=\$\(grep -c/);
+  assert.match(source, /startDelayMs \+ workloadMs \+ 15 \* 60_000/);
+  assert.doesNotMatch(source, /attempt < 450/);
 });
 
 test("cloud acceptance can run a single enabled target without requiring OCI settings", async t => {
@@ -91,4 +94,17 @@ test("optional preload measurement synchronizes targets and packages comparable 
   assert.match(preload.startAt, /^\d{4}-\d{2}-\d{2}T/); assert.equal(preload.rate, 400); assert.equal(preload.maxInflight, 128);
   assert.equal(current.preloadSummaries.aws.successfulOperationsPerSecond, 399.5);
   assert.match(fs.readFileSync(path.join(root, started.id, "index.html"), "utf8"), /Canonical preload performance/);
+});
+
+test("dashboard attaches read-only to an externally controlled active run and refreshes its state", t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-cloud-attach-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const id = "cloud-external-active", output = path.join(root, id);
+  const state = { id, output, outputRelative: `.kvs/cloud-runs/${id}`, spec: { mode: "live", matrix: [] }, status: "running", createdAt: "2026-01-01T00:00:00.000Z", startedAt: "2026-01-01T00:00:01.000Z", stages: [{ name: "workload", status: "running" }], targetStatus: { aws: "running" }, targetMetrics: { aws: { completed: 10, scheduled: 100, failed: 0 } }, sessionResults: [], logs: [] };
+  writeStateAtomic(output, state);
+  const observer = new CloudAcceptanceRuns({ outputRoot: root, adapter: {} });
+  assert.equal(observer.active().status, "running");
+  assert.equal(observer.active().targetMetrics.aws.completed, 10);
+  writeStateAtomic(output, { ...state, targetMetrics: { aws: { completed: 25, scheduled: 100, failed: 0 } } });
+  assert.equal(observer.get(id).targetMetrics.aws.completed, 25);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(output, ".dashboard-state.json"), "utf8")).status, "running");
 });

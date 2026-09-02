@@ -71,13 +71,15 @@ The cloud benchmark uses existing dedicated tables and runners. A run advances o
 
 The optional **Measure and compare preload performance** control schedules the canonical preload at one shared UTC T0. Configure the offered writes/s and maximum in-flight writes in step 4. Its evidence includes actual start and skew, elapsed time, requested/completed/failed writes, attempted and successful throughput, P50/P90/P95/P99/P99.9/max latency, attempts, retries, provider-reported write units, and operation-level NDJSON. A requested rate is an offered load, not an achieved-throughput result. Missing consumed-capacity data is reported as unavailable.
 
-Live values are provisional and intended for operational visibility. Accepted comparisons use the complete operation evidence and final summaries in the downloadable ZIP. Preload currently reports live stage status and publishes its performance comparison when the stage completes; workload sessions stream per-target metrics while they run.
+Live values are provisional and intended for operational visibility. The status card identifies the active workload and its effective read/write mix, consistency, load model, execution mode, schedule or concurrency, duration, retry policy, timeout, dataset shape, repetition, and shared T0. Per-target progress shows absolute accounting and percentage. The target-comparison charts plot achieved throughput against offered load and rolling P95 latency; AWS DynamoDB, ADB DynamoDB API, OCI NoSQL, and offered-load series can be shown or hidden independently. Persisted workload logs reconstruct the chart after a browser refresh. Accepted comparisons use the complete operation evidence and final summaries in the downloadable ZIP.
+
+While a benchmark is queued, running, or stopping, the dashboard is monitor-only: configuration steps and both launch actions are disabled. **Stop run** cancels active provider commands while preserving tables, infrastructure, and collected evidence. Cleanup is deliberately separate and requires explicit authorization plus an exact resource list. The Dallas 1,000 RU/WU profiles use six 60-second levels per session, preserving ramp-up, peak, and recovery while keeping the three-repetition matrix operationally practical.
 
 Use [the reusable cloud runbook](docs/cloud-dashboard-runbook.md) for the three-target topology, portable ADB API bootstrap, T0 guidance, and troubleshooting. Resource cleanup is not part of automatic acceptance: keep OCI tables unless an independently authorized operation says otherwise, and remove a temporary resource only after its final package has passed validation.
 
 ## Embedded benchmark operator
 
-The repository includes the `kvs-benchmark-operator` skill for launching authorized runs, following an active run, summarizing preload/workload evidence, diagnosing failed gates, and reporting final package status through Codex. It consumes the same dashboard state and does not implement a separate benchmark path.
+The repository includes the `kvs-benchmark-operator` skill for Codex and Claude Code. It launches authorized runs, follows an active run, summarizes preload/workload evidence, diagnoses failed gates, and reports final package status from the same dashboard state without implementing a separate benchmark path.
 
 Example requests:
 
