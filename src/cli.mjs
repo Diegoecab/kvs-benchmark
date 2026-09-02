@@ -57,7 +57,7 @@ if (options.command === "validate") {
         ? await runClosedLoop({ ...common, startAt: options["start-at"] })
         : await runOpenLoop({ ...common, startAt: options["start-at"] })
       : options.command === "preload"
-        ? await preloadDataset({ ...common, rate: Number(options.rate || 50), maxInflight: Number(options["max-inflight"] || 64) })
+        ? await preloadDataset({ ...common, rate: Number(options.rate || 50), maxInflight: Number(options["max-inflight"] || 64), startAt: options["start-at"] })
         : await certifyDataset({ ...common, rate: Number(options.rate || 25), maxInflight: Number(options["max-inflight"] || 64) });
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
     if (summary.passed === false) process.exitCode = 2;

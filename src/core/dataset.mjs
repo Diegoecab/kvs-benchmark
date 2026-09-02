@@ -38,17 +38,21 @@ async function rateLimitedMap({ count, rate, maxInflight, operation }) {
   return results;
 }
 
-export async function preloadDataset({ config, configSha256, provider, target, table, output, rate = 50, maxInflight = 64 }) {
+export async function preloadDataset({ config, configSha256, provider, target, table, output, rate = 50, maxInflight = 64, startAt = null }) {
   fs.mkdirSync(output, { recursive: true });
-  const startedAt = new Date().toISOString();
+  const scheduledStartAt = startAt ? new Date(startAt).toISOString() : null;
+  if (scheduledStartAt) await sleep(new Date(scheduledStartAt).getTime() - Date.now());
+  const startedAt = new Date().toISOString(); const started = performance.now();
   const results = await rateLimitedMap({ count: config.dataset.keyCount, rate, maxInflight, operation: async index => {
     const record = canonicalRecord(config, index); const started = performance.now();
     try { const result = await provider.write({ pk: record.pk, sk: record.sk }, record.version); return { index, latencyMs: fixed(performance.now() - started), writeUnits: result.writeUnits || 0, attempts: result.attempts || 1, error: null }; }
     catch (error) { return { index, latencyMs: fixed(performance.now() - started), writeUnits: 0, attempts: error?.$metadata?.attempts || 1, error: errorEvidence(error) }; }
   }});
+  const durationMs = fixed(performance.now() - started); const durationSeconds = fixed(durationMs / 1000);
   const failures = results.filter(result => result.error);
   fs.writeFileSync(path.join(output, "preload-operations.ndjson"), `${results.map(JSON.stringify).join("\n")}\n`);
-  const summary = { schemaVersion: 1, target, table, configName: config.name, configSha256, startedAt, endedAt: new Date().toISOString(), requested: results.length, completed: results.length - failures.length, failures: failures.length, passed: failures.length === 0, rate, maxInflight, latencyMs: distribution(results.filter(x => !x.error).map(x => x.latencyMs)), writeUnits: fixed(results.reduce((sum, x) => sum + x.writeUnits, 0)), errors: Object.fromEntries(Object.entries(failures.reduce((map, x) => { map[x.error.name] = (map[x.error.name] || 0) + 1; return map; }, {})).sort()) };
+  const completed = results.length - failures.length;
+  const summary = { schemaVersion: 1, target, table, configName: config.name, configSha256, scheduledStartAt, actualStartAt: startedAt, startSkewMs: scheduledStartAt ? new Date(startedAt).getTime() - new Date(scheduledStartAt).getTime() : null, startedAt, endedAt: new Date().toISOString(), durationMs, durationSeconds, requested: results.length, completed, failures: failures.length, passed: failures.length === 0, requestedOperationsPerSecond: rate, attemptedOperationsPerSecond: durationSeconds ? fixed(results.length / durationSeconds) : null, successfulOperationsPerSecond: durationSeconds ? fixed(completed / durationSeconds) : null, rate, maxInflight, latencyMs: distribution(results.filter(x => !x.error).map(x => x.latencyMs)), attempts: results.reduce((sum, x) => sum + x.attempts, 0), retryCount: results.reduce((sum, x) => sum + Math.max(0, x.attempts - 1), 0), writeUnits: fixed(results.reduce((sum, x) => sum + x.writeUnits, 0)), errors: Object.fromEntries(Object.entries(failures.reduce((map, x) => { map[x.error.name] = (map[x.error.name] || 0) + 1; return map; }, {})).sort()) };
   fs.writeFileSync(path.join(output, "preload-summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
   return summary;
 }

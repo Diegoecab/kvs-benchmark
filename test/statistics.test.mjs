@@ -9,5 +9,6 @@ test("distribution handles closed-loop sized sample arrays without overflowing t
   assert.equal(result.samples, 500_000);
   assert.equal(result.max, 999.9);
   assert.equal(result.p50, 499.9);
+  assert.equal(result.p90, 899.9);
   assert.equal(result.p99, 989.9);
 });

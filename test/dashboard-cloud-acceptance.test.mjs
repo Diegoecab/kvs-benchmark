@@ -65,3 +65,28 @@ test("cloud acceptance can run a single enabled target without requiring OCI set
   for (let attempt = 0; attempt < 100 && !["complete", "failed"].includes(current.status); attempt += 1) { await new Promise(resolve => setTimeout(resolve, 10)); current = runs.get(started.id); }
   assert.equal(current.status, "complete"); assert.deepEqual(Object.keys(current.targetStatus), ["aws"]); assert.deepEqual(Object.keys(current.summaries), ["aws"]);
 });
+
+test("optional preload measurement synchronizes targets and packages comparable summaries", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-cloud-preload-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const staged = [];
+  const adapter = {
+    preflight: async () => ({ aws: "Online" }), validateResources: async () => ({ ready: true }),
+    stage: async (spec, action, startAt) => { staged.push({ action, startAt, rate: spec.preloadRate, maxInflight: spec.preloadMaxInflight }); return spec.enabled.map(() => ({ stdout: "ok" })); },
+    collect: async (spec, action) => {
+      for (const target of spec.enabled) {
+        const dir = path.join(spec.localOutput, "evidence", action, target); fs.mkdirSync(dir, { recursive: true });
+        if (action === "preload") fs.writeFileSync(path.join(dir, "preload-summary.json"), JSON.stringify({ target, actualStartAt: "2026-01-01T00:00:00.001Z", startSkewMs: 1, requested: 10_000, completed: 10_000, failures: 0, successfulOperationsPerSecond: 399.5, latencyMs: { p95: 4, p99: 7 }, writeUnits: 10_000 }));
+        else if (action === "certify") fs.writeFileSync(path.join(dir, "dataset-certificate.json"), JSON.stringify({ target, observedSha256: hash, passed: true }));
+        else fs.writeFileSync(path.join(dir, "summary.json"), JSON.stringify({ target, configSha256: hash, scheduledStartAt: "2026-01-01T00:00:00.000Z", actualStartAt: "2026-01-01T00:00:00.000Z", startSkewMs: 0, scheduled: 20, accounted: 20, completed: 20, failed: 0, harnessPassed: true, successfulServiceLatencyMs: { p95: 1, p99: 2, max: 3 } }));
+      }
+    },
+  };
+  const measured = structuredClone(input); measured.execution = { mode: "async", capturePreloadMetrics: true, preloadRate: 400, preloadMaxInflight: 128 };
+  const runs = new CloudAcceptanceRuns({ outputRoot: root, adapter }); const started = runs.start(measured); let current = started;
+  for (let attempt = 0; attempt < 100 && !["complete", "failed"].includes(current.status); attempt += 1) { await new Promise(resolve => setTimeout(resolve, 10)); current = runs.get(started.id); }
+  assert.equal(current.status, "complete");
+  const preload = staged.find(item => item.action === "preload");
+  assert.match(preload.startAt, /^\d{4}-\d{2}-\d{2}T/); assert.equal(preload.rate, 400); assert.equal(preload.maxInflight, 128);
+  assert.equal(current.preloadSummaries.aws.successfulOperationsPerSecond, 399.5);
+  assert.match(fs.readFileSync(path.join(root, started.id, "index.html"), "utf8"), /Canonical preload performance/);
+});

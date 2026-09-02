@@ -53,6 +53,10 @@ test("dashboard defaults to async and exposes live progress and package download
   assert.match(html, /name="run-mode" value="live"/);
   assert.match(html, /id="t0-lead-seconds"/);
   assert.match(app, /t0LeadSeconds: optionalNumber\("t0-lead-seconds"\)/);
+  assert.match(html, /id="capture-preload-metrics"/);
+  assert.match(html, /id="preload-rate"[^>]*value="400"/);
+  assert.match(html, /id="preload-max-inflight"[^>]*value="128"/);
+  assert.match(app, /capturePreloadMetrics: \$\("capture-preload-metrics"\)\.checked/);
   assert.match(html, /Download benchmark output \(\.zip\)/);
   assert.match(app, /mode === "live" \? 200 : 1000/);
   assert.match(app, /localStorage\.setItem\("kvs-dashboard-run-id"/);

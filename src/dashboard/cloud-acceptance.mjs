@@ -11,7 +11,7 @@ import { readRunStates, stateFileName, writeStateAtomic } from "./file-state.mjs
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const configDirectory = path.join(repositoryRoot, "configs");
 const defaultOutput = path.join(repositoryRoot, ".kvs", "cloud-runs");
-const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:9b240a19a1b518004bbf5b07b5980363bb80d86b383b9d59df975100fc6d23e4";
+const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:b9d4b0539191646a95529be919752e756e1f9815105e4dffb2e2ee6200e87de9";
 const stages = ["runner-readiness", "resource-validation", "dataset-preload", "dataset-certification", "dataset-hash-match", "t0-scheduled", "workload", "evidence-collection", "acceptance-validation", "package-generation"];
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const safe = (value, pattern, label) => { if (!pattern.test(value || "")) throw new Error(`${label} is invalid`); return value; };
@@ -38,6 +38,11 @@ function validate(input) {
   const requestedLead = input.execution?.t0LeadSeconds;
   if (requestedLead != null && (!Number.isInteger(Number(requestedLead)) || Number(requestedLead) < 30 || Number(requestedLead) > 3600)) throw new Error("T0 lead time must be an integer between 30 and 3600 seconds");
   result.t0LeadSeconds = requestedLead == null ? (enabled.some(name => name === "adb" || name === "ndcs") ? 900 : 120) : Number(requestedLead);
+  result.capturePreloadMetrics = Boolean(input.execution?.capturePreloadMetrics);
+  result.preloadRate = Number(input.execution?.preloadRate ?? (result.capturePreloadMetrics ? 400 : 20));
+  result.preloadMaxInflight = Number(input.execution?.preloadMaxInflight ?? (result.capturePreloadMetrics ? 128 : 16));
+  if (!Number.isInteger(result.preloadRate) || result.preloadRate < 1 || result.preloadRate > 10_000) throw new Error("Preload rate must be an integer between 1 and 10000 operations per second");
+  if (!Number.isInteger(result.preloadMaxInflight) || result.preloadMaxInflight < 1 || result.preloadMaxInflight > 1024) throw new Error("Preload max in-flight must be an integer between 1 and 1024");
   if (enabled.includes("aws")) Object.assign(result, { awsProfile: safe(target.aws.profile, /^[A-Za-z0-9_.-]+$/, "AWS profile"), awsRegion: safe(target.aws.region, /^[a-z]{2}-[a-z]+-\d$/, "AWS region"), awsTable: safe(target.aws.resource, /^[A-Za-z0-9_.-]+$/, "AWS table"), awsRunner: safe(target.aws.runnerId, /^i-[a-f0-9]+$/, "AWS runner"), bucket: safe(input.artifactBucket, /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, "Artifact bucket") });
   if (enabled.includes("adb")) Object.assign(result, { adbOciProfile: safe(target.adb.profile, /^[A-Za-z0-9_.-]+$/, "ADB OCI profile"), adbOciRegion: safe(target.adb.region, /^[a-z]{2}-[a-z]+-\d$/, "ADB OCI region"), adbTable: safe(target.adb.resource, /^[A-Za-z0-9_.-]+$/, "ADB table"), adbRunner: safe(target.adb.runnerId, /^ocid1\.instance\./, "ADB runner"), adbRunnerCompartment: safe(target.adb.runnerCompartmentId, /^ocid1\.(compartment|tenancy)\./, "ADB runner compartment"), adbBucket: safe(target.adb.evidenceBucket, /^[A-Za-z0-9_.-]+$/, "ADB evidence bucket"), adbDatabaseId: target.adb.databaseId ? safe(target.adb.databaseId, /^ocid1\.autonomousdatabase\./, "Autonomous Database") : null });
   if (enabled.includes("ndcs")) {
@@ -57,7 +62,7 @@ function appendLog(state, { level = "info", stage = "pipeline", target = "contro
   if (state.logs.length > 1000) state.logs.splice(0, state.logs.length - 1000);
 }
 function visible(state) {
-  return { schemaVersion: 1, id: state.id, kind: "cloud-benchmark", mode: state.spec.mode, status: state.status, createdAt: state.createdAt, startedAt: state.startedAt || null, completedAt: state.completedAt || null, stages: state.stages, targetStatus: state.targetStatus, sharedStartAt: state.sharedStartAt || null, currentSession: state.currentSession || null, matrix: state.spec.matrix, certificates: state.certificates || null, summaries: state.summaries || null, sessionResults: state.sessionResults || [], targetMetrics: state.targetMetrics || {}, logs: state.logs || [], error: state.error || null, output: state.outputRelative, downloadUrl: state.archiveFile ? `/api/runs/${encodeURIComponent(state.id)}/download` : null };
+  return { schemaVersion: 1, id: state.id, kind: "cloud-benchmark", mode: state.spec.mode, status: state.status, createdAt: state.createdAt, startedAt: state.startedAt || null, completedAt: state.completedAt || null, stages: state.stages, targetStatus: state.targetStatus, sharedStartAt: state.sharedStartAt || null, preloadStartAt: state.preloadStartAt || null, preloadSummaries: state.preloadSummaries || null, currentSession: state.currentSession || null, matrix: state.spec.matrix, certificates: state.certificates || null, summaries: state.summaries || null, sessionResults: state.sessionResults || [], targetMetrics: state.targetMetrics || {}, logs: state.logs || [], error: state.error || null, output: state.outputRelative, downloadUrl: state.archiveFile ? `/api/runs/${encodeURIComponent(state.id)}/download` : null };
 }
 
 function runtimeArguments(spec, session, { workload = true } = {}) {
@@ -79,7 +84,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
     ? `envargs=(--env-file /opt/kvs-dashboard/adb-api.runtime.env -e AWS_REGION=${spec.adbOciRegion})`
     : `envargs=(-e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION=${spec.ndcsOciRegion} -e OCI_COMPARTMENT_ID=${spec.ndcsCompartment})`;
   if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nif ! sudo -n podman --version >/dev/null 2>&1; then echo "Runner prerequisite failed: the ocarun user requires passwordless access to Podman for the benchmark commands. Apply the documented sudoers policy or replace this runner." >&2; exit 20; fi\nif ! sudo -n podman image exists ${shellQuote(spec.image)}; then sudo -n podman pull ${shellQuote(spec.image)} >/dev/null; fi\nsudo -n podman image exists ${shellQuote(spec.image)}\n`;
-  const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : `${action} --rate=20 --max-inflight=16`;
+  const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : action === "preload" ? `preload --rate=${spec.preloadRate} --max-inflight=${spec.preloadMaxInflight}${startAt ? ` --start-at=${startAt}` : ""}` : `${action} --rate=20 --max-inflight=16`;
   const outputArgument = action === "doctor" ? "results/doctor.json" : "results";
   const invocation = `sudo podman run --rm --network host "${'${envargs[@]}'}" -v "$root:/app/results:z" "$image" ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=${target} --table=${shellQuote(table)} --output=${outputArgument}`;
   const liveInvocation = `${liveMonitor("$root", session.scheduledOperationsPerTarget)}${invocation} &\nbenchmark_pid=$!\nwhile kill -0 "$benchmark_pid" 2>/dev/null; do write_progress; sleep 1; done\nset +e\nwait "$benchmark_pid"\ncode=$?\nset -e\nwrite_progress\nexit "$code"`;
@@ -92,7 +97,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
 
 function awsCommands(spec, action, output, startAt, session = spec.matrix[0]) {
   if (action === "preflight") return ["set -eu", "podman --version", `if ! podman image exists ${spec.image}; then podman pull ${spec.image} >/dev/null; fi`, `podman image exists ${spec.image}`];
-  const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : `${action} --rate=20 --max-inflight=16`;
+  const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : action === "preload" ? `preload --rate=${spec.preloadRate} --max-inflight=${spec.preloadMaxInflight}${startAt ? ` --start-at=${startAt}` : ""}` : `${action} --rate=20 --max-inflight=16`;
   const prefix = `results/${spec.runId}/${action}/aws`;
   const invocation = `podman run --rm --network host -e AWS_REGION=${spec.awsRegion} -v $root:/app/results:Z $image ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=aws --table=${spec.awsTable} --output=results`;
   const runCommand = isRun ? `${liveMonitor("$root", session.scheduledOperationsPerTarget, `/usr/local/bin/aws s3 cp "$root/progress.json" s3://${spec.bucket}/${prefix}/progress.json --only-show-errors || true`)}${invocation} & benchmark_pid=$!; while kill -0 "$benchmark_pid" 2>/dev/null; do write_progress; sleep 1; done; set +e; wait "$benchmark_pid"; code=$?; set -e; write_progress; if [ "$code" -ne 0 ]; then exit "$code"; fi` : invocation;
@@ -175,10 +180,12 @@ export class CliCloudAdapter {
 function readJson(file) { return JSON.parse(fs.readFileSync(file, "utf8")); }
 function allFiles(directory) { return fs.readdirSync(directory, { recursive: true, withFileTypes: true }).filter(item => item.isFile()).map(item => path.join(item.parentPath || item.path, item.name)); }
 function packageRun(state) {
+  const preloadRows = Object.entries(state.preloadSummaries || {}).map(([target, value]) => `<tr><td>${target.toUpperCase()}</td><td>${value.actualStartAt}</td><td>${value.startSkewMs ?? "-"}</td><td>${value.completed}/${value.requested}</td><td>${value.failures}</td><td>${value.successfulOperationsPerSecond ?? "-"}</td><td>${value.latencyMs?.p95 ?? "-"}</td><td>${value.latencyMs?.p99 ?? "-"}</td><td>${value.writeUnits ?? "-"}</td></tr>`).join("");
+  const preloadSection = preloadRows ? `<h2>Canonical preload performance</h2><table><thead><tr><th>Target</th><th>Actual start UTC</th><th>Start skew ms</th><th>Completed</th><th>Failures</th><th>Successful ops/s</th><th>P95 ms</th><th>P99 ms</th><th>Write units</th></tr></thead><tbody>${preloadRows}</tbody></table>` : "";
   const rows = state.sessionResults.flatMap(session => Object.entries(session.summaries).map(([target, value]) => `<tr><td>${session.id}</td><td>${target.toUpperCase()}</td><td>${value.actualStartAt}</td><td>${value.startSkewMs}</td><td>${value.completed}/${value.scheduled}</td><td>${value.successfulServiceLatencyMs?.p95 ?? "-"}</td><td>${value.successfulServiceLatencyMs?.p99 ?? "-"}</td><td>${value.successfulServiceLatencyMs?.max ?? "-"}</td></tr>`)).join("");
   const certificate = Object.values(state.certificates)[0];
   const html = `<!doctype html><html lang="en"><meta charset="utf-8"><title>KVS cloud benchmark</title><style>body{max-width:1100px;margin:40px auto;font:15px system-ui;color:#172033}table{width:100%;border-collapse:collapse}th,td{padding:9px;border-bottom:1px solid #ddd;text-align:left}.ok{color:#087a55}</style><h1>KVS cloud benchmark</h1><p class="ok"><b>COMPLETE</b> — ${state.sessionResults.length} synchronized matrix session(s) across ${state.spec.enabled.map(value => value.toUpperCase()).join(", ")}.</p><p>Dataset SHA-256: <code>${certificate.observedSha256}</code>.</p><table><thead><tr><th>Session</th><th>Target</th><th>Actual start UTC</th><th>Start skew ms</th><th>Completed</th><th>P95 ms</th><th>P99 ms</th><th>Max ms</th></tr></thead><tbody>${rows}</tbody></table><h2>Evidence</h2><p>The ZIP contains preload records, strong-read dataset certificates, operation-level NDJSON, telemetry, summaries, clock evidence, stage events, and SHA-256 manifest.</p></html>`;
-  fs.writeFileSync(path.join(state.output, "index.html"), html);
+  fs.writeFileSync(path.join(state.output, "index.html"), html.replace("<table><thead><tr><th>Session</th>", `${preloadSection}<h2>Workload sessions</h2><table><thead><tr><th>Session</th>`));
   fs.writeFileSync(path.join(state.output, "run-state.json"), `${JSON.stringify(visible(state), null, 2)}\n`);
   fs.writeFileSync(path.join(state.output, "pipeline-log.ndjson"), `${(state.logs || []).map(item => JSON.stringify(item)).join("\n")}\n`);
   const files = allFiles(state.output).filter(file => !file.endsWith(".zip") && !file.endsWith("manifest-sha256.json") && path.basename(file) !== stateFileName);
@@ -227,7 +234,17 @@ export class CloudAcceptanceRuns {
     try {
       await this.step(state, "runner-readiness", () => this.adapter.preflight(spec));
       await this.step(state, "resource-validation", () => this.adapter.validateResources(spec));
-      await this.step(state, "dataset-preload", async () => { state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "preloading"])); const value = await this.adapter.stage(spec, "preload"); state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "preloaded"])); return value.map(item => item.stdout?.slice(-120)); });
+      await this.step(state, "dataset-preload", async () => {
+        state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "preloading"]));
+        state.preloadStartAt = spec.capturePreloadMetrics ? new Date(Math.ceil((Date.now() + spec.t0LeadSeconds * 1000) / 10_000) * 10_000).toISOString() : null;
+        const value = await this.adapter.stage(spec, "preload", state.preloadStartAt);
+        if (spec.capturePreloadMetrics) {
+          await this.adapter.collect(spec, "preload");
+          state.preloadSummaries = Object.fromEntries(spec.enabled.map(target => [target, readJson(path.join(state.output, "evidence", "preload", target, "preload-summary.json"))]));
+        }
+        state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "preloaded"]));
+        return state.preloadSummaries || value.map(item => item.stdout?.slice(-120));
+      });
       await this.step(state, "dataset-certification", async () => { state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "certifying"])); await this.adapter.stage(spec, "certify"); await this.adapter.collect(spec, "certify"); state.certificates = Object.fromEntries(spec.enabled.map(target => [target, readJson(path.join(state.output, "evidence", "certify", target, "dataset-certificate.json"))])); state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "certified"])); return Object.fromEntries(Object.entries(state.certificates).map(([key, value]) => [key, value.observedSha256])); });
       await this.step(state, "dataset-hash-match", () => { const hashes = Object.values(state.certificates).map(value => value.observedSha256); if (new Set(hashes).size !== 1 || Object.values(state.certificates).some(value => !value.passed)) throw new Error("Dataset certificates do not match"); return hashes[0]; });
       await this.step(state, "t0-scheduled", () => `${spec.matrix.length} synchronized session T0 value(s) will use a ${spec.t0LeadSeconds}s delivery window`);

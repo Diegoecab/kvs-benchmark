@@ -27,15 +27,16 @@ The dashboard preflight now downloads its pinned image digest when it is missing
 3. Select the AWS runner/table/evidence bucket and the independent ADB and NoSQL profile, compartment, runners, tables, and evidence bucket.
 4. Probe ADB tables and confirm the selected database ID matches the protected runner endpoint.
 5. Select the four `dallas-1000-*` profiles and set three repetitions for each.
-6. Leave T0 blank to use the OCI-safe automatic value of 900 seconds. Run Command delivery in this environment was observed above six minutes; lowering T0 can invalidate synchronized-start fairness.
-7. Approve canonical preload writes, review the immutable matrix, and start the cloud benchmark.
-8. Do not start another run while any provider command from the previous run remains `ACCEPTED` or `IN_PROGRESS`.
+6. Enable **Measure and compare preload performance**, set 400 offered writes/s and 128 maximum in-flight writes. The dashboard assigns one shared preload T0 and adds elapsed time, achieved throughput, latency percentiles, failures, retries, write units, start skew, and operation evidence to the package.
+7. Leave T0 blank to use the OCI-safe automatic value of 900 seconds. Run Command delivery in this environment was observed above six minutes; lowering T0 can invalidate synchronized-start fairness.
+8. Approve canonical preload writes, review the immutable matrix, and start the cloud benchmark.
+9. Do not start another run while any provider command from the previous run remains `ACCEPTED` or `IN_PROGRESS`.
 
 ## Expected guardrails
 
 - Preflight verifies SSM/Run Command, Podman, and the exact pinned image. Missing images are pulled automatically.
 - Resource validation checks existing table state, schema, endpoint identity, and provisioned capacity without creating infrastructure.
-- Preload is idempotent. Strong certification must produce the same canonical hash on all three products before workload execution.
+- Preload is idempotent. When preload measurement is enabled, all targets receive the same offered write rate and shared UTC start; compare achieved throughput together with failures and latency rather than treating the requested rate as achieved throughput. Strong certification must produce the same canonical hash on all three products before workload execution.
 - Each workload gets one shared UTC T0. Evidence upload and final accounting must complete before the next session.
 - A failed delivery is canceled to avoid hidden queue overlap. Inspect provider-side command status before retrying because a cancellation request can race with late delivery.
 
