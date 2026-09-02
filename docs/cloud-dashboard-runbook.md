@@ -6,7 +6,7 @@ This runbook prepares the existing-infrastructure dashboard path for AWS DynamoD
 
 - AWS DynamoDB and its runner use `us-east-1`; place the runner in the same Availability Zone used by the prior benchmark (`us-east-1a`).
 - Select an OCI CLI profile and region that can access both reviewed OCI targets; the profile name is environment-specific and must never be hardcoded.
-- Autonomous Database must be `AVAILABLE`, use `BRING_YOUR_OWN_LICENSE`, and have fixed compute with base autoscaling disabled. Size ECPU independently for the highest offered-rate step; table RCU/WCU alone does not prove that the ADB data-access endpoint can sustain that request rate.
+- Autonomous Database must be `AVAILABLE` and use `BRING_YOUR_OWN_LICENSE`. Record both the ADB `compute-count`/general autoscaling flag and the DynamoDB-compatible table's provisioned RCU/WCU; do not treat either as an undocumented substitute for the other. Oracle's current billing documentation maps table capacity internally at 250 RCU/ECPU and 200 WCU/ECPU, rounds up, enforces a two-ECPU minimum per table, and always enables autoscaling for that table mapping. Confirm with the service team whether changing base `compute-count` affects the compatible API before using it as a benchmark variable.
 - The dedicated ADB API table uses 500 RCU / 500 WCU. The dedicated OCI NoSQL table uses 1,000 RU / 1,000 WU. The temporary AWS table uses 500 RCU / 500 WCU.
 - Keep all OCI tables after the run. Delete the temporary AWS table only after the final package and acceptance validation pass.
 
@@ -16,7 +16,7 @@ This runbook prepares the existing-infrastructure dashboard path for AWS DynamoD
 2. Grant that Dynamic Group Run Command execution, `manage object-family`, and `manage nosql-family` in the benchmark compartment.
 3. Enable the Compute Instance Run Command plugin and TCP/443 egress on both private runners.
 4. Run `node scripts/bootstrap-existing-adb-ddb-api.mjs --autonomous-database-id=<ocid> --table-name=<table> --profile=<oci-profile> --region=<region> --benchmark-repository=<path> --apply=true` from the infrastructure repository to validate BYOL, rotate the transient ADMIN password, issue a time-limited API key, and set the dedicated table to 500/500.
-5. Run `scripts/bootstrap-adb-runner-runtime.mjs` from this repository to transfer that key to the ADB runner using RSA-OAEP ciphertext. Confirm `ADB_RUNNER_RUNTIME_READY`.
+5. Run `scripts/bootstrap-adb-runner-runtime.mjs` from this repository to transfer that key to the ADB runner using RSA-OAEP ciphertext. Confirm `ADB_RUNNER_RUNTIME_READY`. For an unattended reusable runner, use the separately authorized credential-rotation procedure so preflight can renew a table-scoped key before it becomes too short-lived for the complete matrix.
 
 The dashboard preflight now downloads its pinned image digest when it is missing. No manual image pull is required.
 
@@ -39,11 +39,14 @@ The dashboard preflight now downloads its pinned image digest when it is missing
 - Preload is idempotent. When preload measurement is enabled, all targets receive the same offered write rate and shared UTC start; compare achieved throughput together with failures and latency rather than treating the requested rate as achieved throughput. Strong certification must produce the same canonical hash on all three products before workload execution.
 - Each workload gets one shared UTC T0. Evidence upload and final accounting must complete before the next session.
 - A failed delivery is canceled to avoid hidden queue overlap. Inspect provider-side command status before retrying because a cancellation request can race with late delivery.
+- A transient AWS or OCI status-poll failure is retried with backoff and retained in `control/command-journal.ndjson`; it is a control-plane visibility event, not evidence that the remote workload failed.
+- A nonzero workload command triggers final-evidence collection before any pipeline decision. Fully accounted service errors are recorded in the comparison and do not block the remaining sessions.
+- **Resume verified checkpoint** is available only after every immutable dataset gate passes. It reconciles the interrupted session, reuses finalized work, and assigns a new shared T0 only to the next unexecuted session.
 
 ## Troubleshooting learned from the reference run
 
 - `CredentialsProviderError` with a valid runtime usually means `sudo` stripped inherited variables. Use the protected `adb-api.runtime.env`; do not pass credentials as inherited `-e NAME` values.
 - `ENOENT configs/dallas-1000-*.json` means the pinned runner image predates the workload profiles. Use the dashboard default digest or publish and select a newer immutable digest.
 - `ACCEPTED` for several minutes is a control-plane delivery delay, not a NoSQL capacity failure. Keep the 900-second delivery/T0 defaults and inspect command execution before retrying.
-- HTTP `429` or `504` responses from the ADB DynamoDB-compatible endpoint, SDK deserialization errors caused by an HTML gateway body, or growing request timeouts indicate endpoint saturation even when the mapped table still reports sufficient RCU/WCU. Stop a doomed matrix after preserving the completed session, inspect failures by offered-rate step, resize fixed ADB compute only with explicit cost authorization, and pass a short peak-rate rehearsal before restarting the complete matrix. In one observed 900-byte strong-read rehearsal, a 2-ECPU database began returning errors at 300 operations/s; treat that as an environment observation, not a universal sizing ratio.
+- HTTP `429` or `504` responses from the ADB DynamoDB-compatible endpoint, SDK deserialization errors caused by an HTML gateway body, or growing request timeouts indicate endpoint saturation even when the mapped table still reports sufficient RCU/WCU. Preserve the complete requested matrix unless the operator explicitly stops it, inspect failures by offered-rate step, and distinguish table-mapped capacity from the ADB base `compute-count`. In one observed 900-byte strong-read rehearsal, a database configured with base `compute-count=2` began returning errors at 300 operations/s; treat that as an environment observation, not a universal sizing ratio or proof that base compute controls the API.
 - `EACCES` during encrypted bootstrap requires both SELinux relabel `:Z` and `--user 0:0` on the two ephemeral bootstrap containers. Normal workload containers retain their normal user.

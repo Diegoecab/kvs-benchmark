@@ -113,6 +113,8 @@ The ADB runner needs the same Run Command and evidence-bucket policies. DynamoDB
 
 The stable protected runtime files are `/opt/kvs-dashboard/adb-api.runtime.json` and `/opt/kvs-dashboard/adb-api.runtime.env`. They are created only during the separately approved encrypted ADB secret bootstrap and remain owned by `root` with mode `0600`. Podman consumes the env file directly as root so `sudo` cannot strip the ADB variables. Neither file may be embedded in cloud-init, Terraform state, dashboard input, Run Command plaintext, or evidence.
 
+ADB DynamoDB-compatible access keys have an expiration timestamp. A runner configured for unattended reuse also keeps the separately approved database renewal credential at `/opt/kvs-dashboard/.adb-admin-password`, owned by `root` with mode `0600`. Before any cloud run, preflight calculates the complete matrix plus T0 delivery budget and refuses to continue when the current key cannot cover that window. If the renewal credential is present, preflight replaces the key atomically with a table-scoped `READ_WRITE` key and reports only its expiration timestamp. Passwords, access IDs, and secret keys are never written to evidence or command output.
+
 Use `scripts/bootstrap-adb-runner-runtime.mjs` to install them. The runner generates an ephemeral RSA private key locally; only its public key leaves the VM. Access-key values are sent back as RSA-OAEP ciphertext, the runtime files are written inside the rootful container mount, and the ephemeral private key is deleted after installation.
 
 ## AWS runner

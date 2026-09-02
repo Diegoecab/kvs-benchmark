@@ -5,9 +5,9 @@ import { createDashboardServer } from "../src/dashboard/server.mjs";
 test("dashboard serves bootstrap and protects preview with its launch token", async t => {
   const smoke = { id: "smoke-test", mode: "async", status: "complete", progress: { scheduled: 20, accounted: 20, completed: 20, failed: 0 }, summary: { harnessPassed: true } };
   const cloud = { id: "cloud-test", kind: "cloud-acceptance", status: "queued", stages: [] };
-  const localSmokeRuns = { start: options => { assert.equal(options.mode, "async"); return smoke; }, get: id => { if (id !== smoke.id) throw new Error("not local"); return smoke; } };
+  const localSmokeRuns = { start: options => { assert.equal(options.mode, "async"); return smoke; }, get: id => { if (id !== smoke.id) throw new Error("not local"); return smoke; }, list: () => [{ id: smoke.id, kind: smoke.kind || "local-mock-smoke", status: smoke.status, createdAt: "2026-09-01T00:00:00.000Z" }] };
   let activeCloud = null;
-  const cloudRuns = { start: options => { assert.equal(options.writeAuthorization, true); activeCloud = cloud; return cloud; }, get: id => { assert.equal(id, cloud.id); return cloud; }, active: () => activeCloud, latest: () => cloud, stop: async id => { assert.equal(id, cloud.id); activeCloud = null; return { ...cloud, status: "stopped" }; } };
+  const cloudRuns = { start: options => { assert.equal(options.writeAuthorization, true); activeCloud = cloud; return cloud; }, get: id => { assert.equal(id, cloud.id); return cloud; }, active: () => activeCloud, latest: () => cloud, list: () => [{ id: cloud.id, kind: cloud.kind, status: activeCloud?.status || "complete", createdAt: "2026-09-02T00:00:00.000Z" }], resume: id => { assert.equal(id, cloud.id); activeCloud = { ...cloud, status: "queued" }; return activeCloud; }, stop: async id => { assert.equal(id, cloud.id); activeCloud = null; return { ...cloud, status: "stopped" }; } };
   const runnerDiscovery = async options => { assert.equal(options.awsProfile, "aws-benchmark"); return { aws: [], oci: [], artifactBuckets: [] }; };
   const destinationDiscovery = async options => { assert.deepEqual(options, {}); return { awsTables: ["table"], compartments: [] }; };
   const { server, token } = createDashboardServer({ profileDiscovery: async () => ({ aws: ["aws-benchmark"], oci: ["OCI_BENCHMARK"], warnings: [], sources: {} }), runnerDiscovery, destinationDiscovery, localSmokeRuns, cloudRuns, defaultOciRegion: "us-dallas-1" });
@@ -40,7 +40,11 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   const duplicateCloud = await fetch(`${origin}/api/cloud-acceptance`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ writeAuthorization: true }) }); assert.equal(duplicateCloud.status, 409); assert.equal((await duplicateCloud.json()).active.id, cloud.id);
   const localDuringCloud = await fetch(`${origin}/api/local-smoke`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ mode: "async" }) }); assert.equal(localDuringCloud.status, 409); assert.equal((await localDuringCloud.json()).active.id, cloud.id);
   const activeRun = await fetch(`${origin}/api/runs/active`).then(response => response.json()); assert.equal(activeRun.active.id, cloud.id); assert.equal(activeRun.latest.id, cloud.id);
+  const runHistory = await fetch(`${origin}/api/runs`).then(response => response.json()); assert.equal(runHistory.count, 2); assert.equal(runHistory.items[0].id, cloud.id); assert.equal(runHistory.activeRunId, cloud.id);
   const cloudStatus = await fetch(`${origin}/api/runs/${cloud.id}`).then(response => response.json()); assert.equal(cloudStatus.kind, "cloud-acceptance");
+  activeCloud = null;
+  const deniedResume = await fetch(`${origin}/api/runs/${cloud.id}/resume`, { method: "POST" }); assert.equal(deniedResume.status, 403);
+  const resumed = await fetch(`${origin}/api/runs/${cloud.id}/resume`, { method: "POST", headers: { "x-kvs-csrf": token } }); assert.equal(resumed.status, 202); assert.equal((await resumed.json()).status, "queued");
   const deniedStop = await fetch(`${origin}/api/runs/${cloud.id}/stop`, { method: "POST" }); assert.equal(deniedStop.status, 403);
   const stopped = await fetch(`${origin}/api/runs/${cloud.id}/stop`, { method: "POST", headers: { "x-kvs-csrf": token } }); assert.equal(stopped.status, 202); assert.equal((await stopped.json()).status, "stopped");
 });

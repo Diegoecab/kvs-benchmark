@@ -15,6 +15,7 @@ Use the repository's dashboard pipeline as the source of truth. Do not recreate 
 - For a local status snapshot, run `node .codex/skills/kvs-benchmark-operator/scripts/snapshot.mjs` from the repository root. Pass `--run-id=<id>` only when the user requests a non-active run.
 - For a launch, validate the selected targets, immutable image digest, workload matrix, repetitions, T0 lead, evidence buckets, and explicit dataset-write authorization. Use `node scripts/run-cloud-benchmark.mjs --spec=<file>` or the dashboard API.
 - For live monitoring, prefer `GET /api/runs/active` and `GET /api/runs/<id>` when the dashboard is running. Otherwise monitor the controller process and `.kvs/cloud-runs/<id>/.dashboard-state.json`.
+- For run history, read `GET /api/runs`, then inspect a selected immutable run with `GET /api/runs/<id>`. Never replace or stop the active monitor merely because the user selects an older run for comparison.
 - For an authorized stop, use the owning dashboard's `POST /api/runs/<id>/stop`. It cancels active remote commands but preserves tables, infrastructure, and evidence. An attached read-only dashboard cannot stop a run owned by another controller.
 - For a report, use only completed evidence. Distinguish provisional live samples from final summaries.
 
@@ -33,6 +34,8 @@ Report stage changes immediately. During workload sessions, summarize per target
 Poll without blocking user communication for more than 60 seconds. Avoid repeating unchanged metrics; provide a short heartbeat when a control-plane wait is materially long.
 
 Preload performance is live only at stage level. After `dataset-preload` completes, read every `evidence/preload/<target>/preload-summary.json` and compare start skew, duration, requested/completed/failures, attempted and successful operations/s, latency percentiles, attempts/retries, and write units. Treat absent consumed-capacity data as unavailable rather than zero consumption.
+
+When reporting a run with multiple stages, keep completed gate and workload-session results accessible while a later stage runs. Distinguish the pipeline gate number from the zero-based offered-load stage inside a session. For a variable open-loop schedule, report each stage's offered rate, duration, and complete/running/pending state; never describe a manually configured database compute change as automatic scaling.
 
 ## Acceptance and safety
 

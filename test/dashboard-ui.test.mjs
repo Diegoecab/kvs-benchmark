@@ -38,7 +38,13 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /Execution performance/); assert.match(app, /function renderLiveCharts/); assert.match(app, /function hydrateLiveSamples/); assert.match(html, /TARGET COMPARISON/); assert.match(html, /aria-label="Chart series"/); assert.match(html, /series-swatch offered/);
   assert.match(html, /id="execution-log"/); assert.match(html, /id="pause-log"/); assert.match(html, /id="copy-log"/); assert.match(html, /id="clear-log"/);
   assert.match(html, /id="session-status"/);
+  assert.match(html, /id="run-overview"/); assert.match(app, /function renderRunOverview/); assert.match(app, /target-overview/);
+  assert.match(html, /id="stage-browser"/); assert.match(html, /id="stage-browser-tabs"/); assert.match(app, /function renderStageBrowser/); assert.match(app, /function preloadStageDetail/); assert.match(app, /function sessionStageDetail/);
+  assert.match(html, /<details class="technical-details">/); assert.doesNotMatch(html, /<pre id="smoke-detail"><\/pre>\s*<\/section>/);
+  assert.match(html, /id="run-history-select"/); assert.match(html, /id="run-history-status"/); assert.match(html, /id="refresh-run-history"/);
+  assert.match(app, /async function refreshRunHistory/); assert.match(app, /async function showHistoricalRun/); assert.match(app, /Historical · read-only/i);
   assert.match(html, /id="stop-run"/); assert.match(app, /async function stopRun/); assert.match(app, /infrastructure, and collected evidence will be preserved/i);
+  assert.match(html, /id="resume-run"/); assert.match(app, /async function resumeRun/); assert.match(app, /verified benchmark checkpoint/i);
   assert.match(app, /CURRENT EXECUTION/); assert.match(app, /Current session/); assert.match(app, /Complete matrix/);
   assert.match(app, /function setRunLock/); assert.match(app, /Active run monitor/); assert.match(app, /if \(runLocked && Number\(step\) !== 5\) return/);
   assert.ok((app.match(/if \(runLocked\) return;/g) || []).length >= 2);
@@ -56,6 +62,7 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /canonical dataset preload and certification/);
   assert.match(app, /function renderRunnerImage/);
   assert.match(html, /theme\.css/); assert.match(theme, /--bg-header: #1a1a2e/); assert.match(theme, /--accent-teal: #0e7a6e/);
+  assert.match(theme, /\.target-overview-grid/); assert.match(theme, /\.stage-browser-tabs/); assert.match(theme, /\.load-stage-grid/);
 });
 
 test("dashboard defaults to async and exposes live progress and package download", () => {

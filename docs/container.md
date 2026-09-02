@@ -13,7 +13,7 @@ docker pull ghcr.io/diegoecab/kvs-benchmark-runner:main
 docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/diegoecab/kvs-benchmark-runner:main
 ```
 
-The same `linux/amd64` digest must run on AWS and OCI. Credentials are supplied at runtime through EC2 roles, OCI instance principals, or short-lived ADB API keys. They are never baked into an image layer.
+The same `linux/amd64` digest must run on AWS and OCI. Credentials are supplied at runtime through EC2 roles, OCI instance principals, or expiring ADB API keys that preflight validates and, on an authorized reusable runner, renews before the matrix. They are never baked into an image layer.
 
 ## Host contract
 

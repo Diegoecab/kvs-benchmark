@@ -17,6 +17,11 @@ let terminalRunId = null;
 let terminalLogs = [];
 let terminalClearedCount = 0;
 let terminalPaused = false;
+let runHistory = [];
+let runHistoryRefreshAt = 0;
+let runHistoryPending = false;
+let stageBrowserRunId = null;
+let selectedStageKey = null;
 const selectedTargets = new Set();
 let automaticDiscovery = null;
 let automaticDiscoveryPending = false;
@@ -116,7 +121,172 @@ async function load() {
     if (restoredRun) showSmoke(restoredRun);
     void monitorRun(runId, restoredRun?.mode || "async", true);
   }
+  await refreshRunHistory({ preserveSelection: true });
   suppressPreview = false;
+}
+
+const terminalRunStatuses = new Set(["complete", "failed", "stopped"]);
+const runKindLabel = kind => kind === "local-mock-smoke" ? "Local functional test" : "Cloud benchmark";
+const runTargetLabel = target => ({ aws: "AWS DynamoDB", adb: "ADB DynamoDB API", ndcs: "OCI NoSQL", mock: "Local mock" })[target] || String(target).toUpperCase();
+const runStageLabel = name => ({
+  "runner-readiness": "Runner readiness",
+  "resource-validation": "Resource validation",
+  "dataset-preload": "Dataset preload",
+  "dataset-certification": "Dataset certification",
+  "dataset-hash-match": "Dataset hash match",
+  "t0-scheduled": "T0 scheduling",
+  workload: "Workload matrix",
+  "evidence-collection": "Evidence collection",
+  "acceptance-validation": "Acceptance validation",
+  "package-generation": "Package generation"
+})[name] || String(name || "pending").replaceAll("-", " ");
+const targetStatusView = status => ({
+  queued: ["Queued", "Waiting for the control plane"],
+  validating: ["Validating", "Checking the existing runner and table"],
+  preloading: ["Preloading", "Writing the canonical dataset"],
+  preloaded: ["Preloaded", "Canonical writes completed"],
+  certifying: ["Certifying", "Strong-reading and hashing every key"],
+  certified: ["Certified", "Dataset hash verified locally"],
+  scheduled: ["Scheduled", "Waiting for the shared T0"],
+  running: ["Running", "Workload traffic is active"],
+  collecting: ["Collecting", "Retrieving provider evidence"],
+  completed: ["Complete", "Target evidence finalized"],
+  complete: ["Complete", "Target evidence finalized"],
+  stopping: ["Stopping", "Cancelling the active command"],
+  stopped: ["Stopped", "Execution stopped; evidence preserved"],
+  failed: ["Failed", "Target did not complete this stage"]
+})[status] || [String(status || "Pending").replaceAll("-", " "), "Waiting for its next pipeline action"];
+function compactResourceId(item) { const value = String(item || "-"); return value.length > 30 ? `${value.slice(0, 14)}...${value.slice(-10)}` : value; }
+function localDateTime(item) { return item ? new Date(item).toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }) : "Pending"; }
+function durationLabel(start, end = new Date().toISOString()) { const milliseconds = Date.parse(end) - Date.parse(start); if (!Number.isFinite(milliseconds) || milliseconds < 0) return "-"; const seconds = Math.round(milliseconds / 1000); return seconds >= 3600 ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m` : seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`; }
+function renderRunOverview(run) {
+  const view = $("run-overview"), cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance";
+  if (!cloud) { view.classList.add("hidden"); view.innerHTML = ""; return; }
+  const stage = (run.stages || []).find(item => item.status === "running") || (run.stages || []).find(item => item.status === "failed") || (run.stages || []).at(-1);
+  const targets = Object.keys(run.targetStatus || {}), inventory = run.resourceInventory || {};
+  const cards = targets.map(target => {
+    const status = run.targetStatus[target], [label, description] = targetStatusView(status), resource = inventory[target] || {};
+    const runner = resource.runnerInstanceId || resource.runnerInstanceOcid, table = resource.tableName || "Table pending validation";
+    return `<article class="target-overview provider-${escapeHtml(target)}"><div class="target-overview-heading"><div>${providerMark(target)}<span><b>${escapeHtml(runTargetLabel(target))}</b><small>${escapeHtml(resource.region || "Region pending")}</small></span></div><span class="target-state ${escapeHtml(status || "pending")}">${escapeHtml(label)}</span></div><strong>${escapeHtml(description)}</strong><dl><div><dt>Table</dt><dd title="${escapeHtml(table)}">${escapeHtml(table)}</dd></div><div><dt>Runner</dt><dd title="${escapeHtml(runner || "Pending")}">${escapeHtml(compactResourceId(runner || "Pending"))}</dd></div></dl></article>`;
+  }).join("");
+  view.classList.remove("hidden");
+  view.innerHTML = `<div class="run-overview-heading"><div><p class="eyebrow">ACTIVE CLOUD RUN</p><h4>${escapeHtml(runStageLabel(stage?.name))}</h4><p>${escapeHtml(run.id)} · started ${escapeHtml(localDateTime(run.startedAt))} · elapsed ${escapeHtml(durationLabel(run.startedAt))}</p></div><span class="run-history-state ${escapeHtml(run.status)}">${["queued", "running", "stopping"].includes(run.status) ? '<i class="run-light" aria-hidden="true"></i>' : ""}${escapeHtml(run.status.toUpperCase())}</span></div><div class="target-overview-grid">${cards}</div>`;
+}
+function stageTechnicalDetail(stage) {
+  if (!stage?.detail || stage.detail === "Passed") return "";
+  return `<details class="stage-evidence"><summary>Technical stage evidence</summary><pre>${escapeHtml(stage.detail)}</pre></details>`;
+}
+function preloadStageDetail(run) {
+  const summaries = run.preloadSummaries || {};
+  if (!Object.keys(summaries).length) return '<p class="stage-empty">Preload metrics will appear here as soon as all target summaries are collected.</p>';
+  const rows = Object.entries(summaries).map(([target, summary]) => `<tr><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${number(summary.completed)} / ${number(summary.requested)}</td><td>${number(summary.failures)}</td><td>${number(summary.successfulOperationsPerSecond)} ops/s</td><td>${number(summary.latencyMs?.p50)} ms</td><td>${number(summary.latencyMs?.p95)} ms</td><td>${number(summary.latencyMs?.p99)} ms</td><td>${number(summary.latencyMs?.max)} ms</td><td>${number(summary.startSkewMs)} ms</td><td>${target === "adb" && Number(summary.writeUnits) === 0 ? "Unavailable" : number(summary.writeUnits)}</td></tr>`).join("");
+  return `<div class="stage-result-callout success"><b>Canonical preload passed on ${Object.keys(summaries).length} targets</b><span>Shared T0 ${escapeHtml(run.preloadStartAt || "-")} · offered ${number(Object.values(summaries)[0]?.requestedOperationsPerSecond)} writes/s</span></div><div class="table-wrap stage-results"><table><thead><tr><th>Target</th><th>Completed</th><th>Failed</th><th>Throughput</th><th>P50</th><th>P95</th><th>P99</th><th>Max</th><th>T0 skew</th><th>Write units</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function certificationStageDetail(run) {
+  const certificates = run.certificates || {};
+  if (!Object.keys(certificates).length) return '<p class="stage-empty">Strong reads and hashes are still being collected from the enabled targets.</p>';
+  const rows = Object.entries(certificates).map(([target, certificate]) => `<tr><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${number(certificate.found ?? certificate.keyCount)} / ${number(certificate.keyCount)}</td><td>${number(certificate.mismatchCount)}</td><td><code title="${escapeHtml(certificate.observedSha256 || "-")}">${escapeHtml(compactResourceId(certificate.observedSha256 || "-"))}</code></td><td><span class="target-state ${certificate.passed ? "complete" : "failed"}">${certificate.passed ? "Passed" : "Failed"}</span></td></tr>`).join("");
+  return `<div class="table-wrap stage-results"><table><thead><tr><th>Target</th><th>Keys found</th><th>Mismatches</th><th>Observed hash</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function inventoryStageDetail(run) {
+  const rows = Object.entries(run.resourceInventory || {}).map(([target, resource]) => `<tr><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${escapeHtml(resource.region || "-")}</td><td>${escapeHtml(resource.tableName || "-")}</td><td title="${escapeHtml(resource.runnerInstanceId || resource.runnerInstanceOcid || "-")}">${escapeHtml(compactResourceId(resource.runnerInstanceId || resource.runnerInstanceOcid || "-"))}</td><td title="${escapeHtml(resource.tableArn || resource.tableOcid || resource.autonomousDatabaseOcid || "-")}">${escapeHtml(compactResourceId(resource.tableArn || resource.tableOcid || resource.autonomousDatabaseOcid || "-"))}</td></tr>`).join("");
+  return rows ? `<div class="table-wrap stage-results"><table><thead><tr><th>Target</th><th>Region</th><th>Table</th><th>Runner</th><th>Service resource</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="stage-empty">Resource inventory is pending validation.</p>';
+}
+function sessionState(run, session) {
+  if ((run.sessionResults || []).some(item => item.id === session.id)) return "complete";
+  if (run.currentSession?.id === session.id) return "running";
+  if (["failed", "stopped"].includes(run.status)) return "not-run";
+  return "pending";
+}
+function sessionSchedule(session, status, startAt) {
+  if (!Array.isArray(session.loadSchedule) || !session.loadSchedule.length) return "";
+  let offset = 0, elapsed = status === "running" && startAt ? Math.max(0, (Date.now() - Date.parse(startAt)) / 1000) : null;
+  return `<div class="load-stage-grid">${session.loadSchedule.map((step, index) => { const start = offset, end = offset += Number(step.seconds); const phaseStatus = status === "complete" ? "complete" : status === "running" && elapsed >= end ? "complete" : status === "running" && elapsed >= start ? "running" : status === "not-run" ? "not-run" : "pending"; return `<article class="load-stage ${phaseStatus}"><span>Stage ${index}</span><b>${number(step.operationsPerSecond)} ops/s</b><small>${number(step.seconds)}s · T+${number(start)}s to T+${number(end)}s</small><i>${phaseStatus === "not-run" ? "Not run" : phaseStatus}</i></article>`; }).join("")}</div>`;
+}
+function sessionResultTable(run, session, result, status) {
+  const summaries = result?.summaries || (status === "running" ? run.targetMetrics : null) || {};
+  if (!Object.keys(summaries).length) return '<p class="stage-empty">Target results will appear here when this session starts.</p>';
+  const rows = Object.entries(summaries).map(([target, summary]) => { const completed = Number(summary.completed || 0), failed = Number(summary.failed || 0), scheduled = Number(summary.scheduled || session.scheduledOperationsPerTarget || 0), latency = summary.successfulServiceLatencyMs || {}; return `<tr><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${number(completed + failed)} / ${number(scheduled)}</td><td>${number(failed)}</td><td>${number(summary.achievedOperationsPerSecond ?? summary.operationsPerSecond)} ops/s</td><td>${number(latency.p95 ?? summary.rollingP95Ms ?? summary.p95)} ms</td><td>${number(latency.p99 ?? summary.p99)} ms</td><td>${number(summary.startSkewMs)} ms</td></tr>`; }).join("");
+  return `<div class="table-wrap stage-results"><table><thead><tr><th>Target</th><th>Accounted</th><th>Failed</th><th>Throughput</th><th>P95</th><th>P99</th><th>T0 skew</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function sessionStageDetail(run, session) {
+  const result = (run.sessionResults || []).find(item => item.id === session.id), status = sessionState(run, session), startAt = result?.sharedStartAt || (run.currentSession?.id === session.id ? run.sharedStartAt : null);
+  return `<div class="stage-detail-heading"><div><span class="target-state ${escapeHtml(status)}">${escapeHtml(status === "not-run" ? "Not run" : status)}</span><h5>${escapeHtml(session.name || session.configName || session.id)}</h5><p>${escapeHtml(session.description || `${number(session.readPercent)}% reads / ${number(session.writePercent)}% writes · ${session.consistency || "-"} consistency`)}</p></div><dl><div><dt>Repetition</dt><dd>${number(session.repetition)}</dd></div><div><dt>Shared T0</dt><dd>${escapeHtml(startAt || "Pending")}</dd></div><div><dt>Operations / target</dt><dd>${number(session.scheduledOperationsPerTarget)}</dd></div></dl></div>${sessionSchedule(session, status, startAt)}${sessionResultTable(run, session, result, status)}`;
+}
+function workloadStageDetail(run) {
+  const rows = (run.matrix || []).map((session, index) => { const status = sessionState(run, session), result = (run.sessionResults || []).find(item => item.id === session.id); return `<tr><td>${index + 1}</td><td>${escapeHtml(session.name || session.configName || session.id)}</td><td>${number(session.readPercent)}% / ${number(session.writePercent)}%</td><td>${escapeHtml(session.consistency || "-")}</td><td>${number(session.repetition)}</td><td><span class="target-state ${escapeHtml(status)}">${escapeHtml(status === "not-run" ? "Not run" : status)}</span></td><td>${escapeHtml(result?.sharedStartAt || (run.currentSession?.id === session.id ? run.sharedStartAt : "Pending"))}</td></tr>`; }).join("");
+  return `<div class="table-wrap stage-results"><table><thead><tr><th>#</th><th>Session</th><th>Read / write</th><th>Consistency</th><th>Rep.</th><th>Status</th><th>Shared T0</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function renderStageBrowserDetail(run, key) {
+  const detail = $("stage-browser-detail");
+  if (key.startsWith("session:")) { const session = (run.matrix || []).find(item => item.id === key.slice(8)); detail.innerHTML = session ? sessionStageDetail(run, session) : '<p class="stage-empty">Session metadata is unavailable.</p>'; return; }
+  const stage = (run.stages || []).find(item => item.name === key.slice(5));
+  if (!stage) { detail.innerHTML = '<p class="stage-empty">Select a stage to inspect its evidence.</p>'; return; }
+  const content = stage.name === "dataset-preload" ? preloadStageDetail(run) : stage.name === "dataset-certification" ? certificationStageDetail(run) : stage.name === "resource-validation" ? inventoryStageDetail(run) : stage.name === "workload" ? workloadStageDetail(run) : stage.name === "dataset-hash-match" && run.certificates ? certificationStageDetail(run) : stage.name === "package-generation" && run.downloadUrl ? `<a class="button-link" href="${escapeHtml(run.downloadUrl)}">Download benchmark output (.zip)</a>` : stage.status === "running" ? '<p class="stage-empty">This stage is active. Its results will remain available here after it completes.</p>' : stage.status === "pending" ? '<p class="stage-empty">This stage has not started yet.</p>' : stageTechnicalDetail(stage);
+  detail.innerHTML = `<div class="stage-detail-heading"><div><span class="target-state ${escapeHtml(stage.status)}">${escapeHtml(stage.status)}</span><h5>${escapeHtml(runStageLabel(stage.name))}</h5><p>${stage.startedAt ? `Started ${escapeHtml(localDateTime(stage.startedAt))}${stage.completedAt ? ` · completed in ${escapeHtml(durationLabel(stage.startedAt, stage.completedAt))}` : ` · elapsed ${escapeHtml(durationLabel(stage.startedAt))}`}` : "Waiting to start"}</p></div></div>${content}`;
+}
+function renderStageBrowser(run) {
+  const browser = $("stage-browser"), cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance";
+  if (!cloud) { browser.classList.add("hidden"); return; }
+  browser.classList.remove("hidden");
+  if (stageBrowserRunId !== run.id) { stageBrowserRunId = run.id; selectedStageKey = null; }
+  const stages = run.stages || [], sessions = run.matrix || [], activeStage = stages.find(item => item.status === "running"), activeSession = run.currentSession?.id;
+  const keys = [...stages.map(item => `gate:${item.name}`), ...sessions.map(item => `session:${item.id}`)];
+  if (!selectedStageKey || !keys.includes(selectedStageKey)) selectedStageKey = activeSession ? `session:${activeSession}` : activeStage ? `gate:${activeStage.name}` : `gate:${stages.filter(item => item.status === "complete").at(-1)?.name || stages[0]?.name}`;
+  const gateButtons = stages.map((stage, index) => `<button type="button" role="tab" aria-selected="${selectedStageKey === `gate:${stage.name}`}" class="stage-tab ${escapeHtml(stage.status)}${selectedStageKey === `gate:${stage.name}` ? " selected" : ""}" data-stage-key="gate:${escapeHtml(stage.name)}"><i>${stage.status === "complete" ? "✓" : stage.status === "failed" ? "!" : stage.status === "running" ? "●" : index + 1}</i><span>${escapeHtml(runStageLabel(stage.name))}</span></button>`).join("");
+  const sessionButtons = sessions.map((session, index) => { const status = sessionState(run, session); return `<button type="button" role="tab" aria-selected="${selectedStageKey === `session:${session.id}`}" class="stage-tab session ${escapeHtml(status)}${selectedStageKey === `session:${session.id}` ? " selected" : ""}" data-stage-key="session:${escapeHtml(session.id)}"><i>${index + 1}</i><span>${escapeHtml(session.name || session.configName || session.id)}<small>rep ${number(session.repetition)}</small></span></button>`; }).join("");
+  $("stage-browser-tabs").innerHTML = `<div class="stage-tab-group"><b>Pipeline gates</b><div>${gateButtons}</div></div><div class="stage-tab-group"><b>Workload sessions</b><div>${sessionButtons}</div></div>`;
+  for (const button of document.querySelectorAll("[data-stage-key]")) button.addEventListener("click", () => { selectedStageKey = button.dataset.stageKey; renderStageBrowser(run); });
+  renderStageBrowserDetail(run, selectedStageKey);
+}
+function elapsedLabel(run) {
+  const start = Date.parse(run.startedAt || run.createdAt), end = Date.parse(run.completedAt || new Date().toISOString());
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return "-";
+  const seconds = Math.max(0, Math.round((end - start) / 1000));
+  return seconds >= 3600 ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m` : seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+}
+function filteredRunHistory() {
+  const status = value("run-history-status");
+  return runHistory.filter(run => status === "all" || run.status === status);
+}
+function renderRunHistoryList({ preserveSelection = true } = {}) {
+  const select = $("run-history-select"), previous = preserveSelection ? select.value : "", runs = filteredRunHistory();
+  select.replaceChildren(...runs.map(run => new Option(`${run.id === runHistory.find(item => !terminalRunStatuses.has(item.status))?.id ? "LIVE · " : ""}${new Date(run.createdAt).toLocaleString()} · ${run.status.toUpperCase()} · ${run.id}`, run.id)));
+  if (previous && runs.some(run => run.id === previous)) select.value = previous;
+  else if (runs.length) select.value = runs[0].id;
+  else select.append(new Option("No runs match this filter", ""));
+  $("run-history-list").innerHTML = runs.slice(0, 8).map(run => { const live = !terminalRunStatuses.has(run.status), completed = `${number(run.completedSessions)} / ${number(run.sessionCount)}`; return `<button type="button" class="run-history-row${select.value === run.id ? " selected" : ""}" data-run-id="${escapeHtml(run.id)}"><span class="run-history-state ${escapeHtml(run.status)}">${live ? '<i class="run-light" aria-hidden="true"></i>' : ""}${escapeHtml(run.status.toUpperCase())}</span><span><b>${escapeHtml(run.id)}</b><small>${escapeHtml(runKindLabel(run.kind))} · ${escapeHtml(new Date(run.createdAt).toLocaleString())}</small></span><span>${(run.targets || []).map(target => `<i title="${escapeHtml(runTargetLabel(target))}">${providerMark(target)}</i>`).join("")}</span><span><b>${escapeHtml(completed)}</b><small>sessions</small></span><span><b>${escapeHtml(elapsedLabel(run))}</b><small>elapsed</small></span></button>`; }).join("") || '<p class="run-history-empty">No executions match this filter.</p>';
+  for (const button of document.querySelectorAll("[data-run-id]")) button.addEventListener("click", () => { select.value = button.dataset.runId; void showHistoricalRun(button.dataset.runId); renderRunHistoryList(); });
+}
+async function showHistoricalRun(id) {
+  const detail = $("run-history-detail");
+  if (!id) { detail.classList.add("hidden"); return; }
+  detail.classList.remove("hidden"); detail.innerHTML = '<p class="run-history-empty">Loading run evidence...</p>';
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(id)}`, { cache: "no-store" }), run = await response.json();
+    if (!response.ok) throw new Error(run.error || `Run lookup failed (${response.status})`);
+    const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", targets = cloud ? Object.keys(run.targetStatus || {}) : ["mock"], sessions = run.sessionResults || [];
+    const rows = sessions.flatMap(session => Object.entries(session.summaries || {}).map(([target, summary]) => `<tr><td>${escapeHtml(session.id)}</td><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${number(summary.completed)} / ${number(summary.scheduled)}</td><td>${number(summary.failed)}</td><td>${number(summary.achievedOperationsPerSecond)} ops/s</td><td>${number(summary.successfulServiceLatencyMs?.p95)} ms</td><td>${number(summary.successfulServiceLatencyMs?.p99)} ms</td></tr>`)).join("");
+    const workloadNames = [...new Set((run.matrix || []).map(item => item.name || item.configName).filter(Boolean))];
+    detail.innerHTML = `<div class="historical-heading"><div><p class="eyebrow">HISTORICAL · READ-ONLY</p><h4>${escapeHtml(run.id)}</h4><p>${escapeHtml(runKindLabel(run.kind))} · started ${escapeHtml(new Date(run.startedAt || run.createdAt).toLocaleString())} · ${escapeHtml(elapsedLabel(run))}</p></div><span class="run-history-state ${escapeHtml(run.status)}">${escapeHtml(run.status.toUpperCase())}</span></div><div class="historical-facts"><div><span>Targets</span><b>${targets.map(target => `${providerMark(target)} ${escapeHtml(runTargetLabel(target))}`).join(" &nbsp; ")}</b></div><div><span>Sessions</span><b>${number(sessions.length)} / ${number(run.matrix?.length || (run.summary ? 1 : 0))}</b></div><div><span>Workloads</span><b>${escapeHtml(workloadNames.join(", ") || "Local functional test")}</b></div><div><span>Evidence</span><b>${run.downloadUrl ? `<a href="${escapeHtml(run.downloadUrl)}">Download ZIP</a>` : "Package not available"}</b></div></div>${run.error ? `<div class="historical-error">${escapeHtml(run.error)}</div>` : ""}${rows ? `<div class="table-wrap historical-results"><table><thead><tr><th>Session</th><th>Target</th><th>Accounted</th><th>Failed</th><th>Throughput</th><th>P95</th><th>P99</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="run-history-empty">No finalized workload sessions are available for this run. Its pipeline state and error are preserved above.</p>`}`;
+  } catch (error) { detail.innerHTML = `<div class="historical-error">${escapeHtml(error.message)}</div>`; }
+}
+async function refreshRunHistory({ preserveSelection = true, quiet = false } = {}) {
+  if (runHistoryPending) return;
+  runHistoryPending = true;
+  try {
+    const response = await fetch("/api/runs", { cache: "no-store" });
+    let payload = await response.json();
+    if (response.status === 404) {
+      const legacyResponse = await fetch("/api/runs/active", { cache: "no-store" }), legacy = await legacyResponse.json();
+      if (!legacyResponse.ok) throw new Error(legacy.error || `Run history fallback failed (${legacyResponse.status})`);
+      const candidates = [legacy.active, legacy.latest].filter(Boolean), unique = [...new Map(candidates.map(run => [run.id, run])).values()];
+      payload = { items: unique.map(run => ({ id: run.id, kind: run.kind, mode: run.mode, status: run.status, createdAt: run.createdAt, startedAt: run.startedAt, completedAt: run.completedAt, targets: Object.keys(run.targetStatus || {}), sessionCount: run.matrix?.length || (run.summary ? 1 : 0), completedSessions: run.sessionResults?.length || (run.summary ? 1 : 0), workloadNames: [...new Set((run.matrix || []).map(item => item.name || item.configName).filter(Boolean))], currentSession: run.currentSession, error: run.error, downloadUrl: run.downloadUrl })) };
+    } else if (!response.ok) throw new Error(payload.error || `Run history failed (${response.status})`);
+    runHistory = payload.items || []; runHistoryRefreshAt = Date.now(); renderRunHistoryList({ preserveSelection });
+    if ($("run-history-select").value) await showHistoricalRun($("run-history-select").value);
+  } catch (error) { if (!quiet) $("run-history-list").innerHTML = `<div class="historical-error">${escapeHtml(error.message)}</div>`; }
+  finally { runHistoryPending = false; }
 }
 
 function runMode() { return document.querySelector('input[name="run-mode"]:checked').value; }
@@ -486,6 +656,7 @@ function showSmoke(run) {
   const progress = run.progress || {}; const terminal = ["complete", "failed", "stopped"].includes(run.status); const latency = run.summary?.successfulServiceLatencyMs || {};
   setRunLock(!terminal);
   const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", session = run.currentSession, targetMetrics = run.targetMetrics || {};
+  renderRunOverview(run); renderStageBrowser(run);
   const accounting = cloud ? ` | ${session ? `session ${escapeHtml(session.id)} (${session.index}/${session.total}) | ` : ""}shared T0 ${escapeHtml(run.sharedStartAt || "pending")}` : ` | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted`;
   const running = ["queued", "running"].includes(run.status), statusIndicator = running ? '<span class="run-light" aria-hidden="true"></span>' : "";
   $("smoke-status").className = `callout run-status ${run.status}${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `${statusIndicator}<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
@@ -513,11 +684,13 @@ function showSmoke(run) {
   $("smoke-detail").textContent = JSON.stringify({ kind: run.kind, mode: run.mode, status: run.status, startedAt: run.startedAt, completedAt: run.completedAt, targetStatus: run.targetStatus, certificates: run.certificates, summaries: run.summaries, evidence: run.output, latestOperation: progress.latestOperation, latestError: progress.latestError }, null, 2);
   $("download-output").classList.toggle("hidden", !run.downloadUrl); if (run.downloadUrl) $("download-output").href = run.downloadUrl;
   $("stop-run").classList.toggle("hidden", terminal || !run.canStop); $("stop-run").disabled = run.status === "stopping";
+  $("resume-run").classList.toggle("hidden", !run.canResume); $("resume-run").disabled = !run.canResume;
   $("start-smoke").disabled = !terminal; $("start-benchmark").disabled = !terminal; if (terminal) localStorage.removeItem("kvs-dashboard-run-id");
+  if (Date.now() - runHistoryRefreshAt > 5000) void refreshRunHistory({ preserveSelection: true, quiet: true });
 }
 
 async function monitorRun(id, mode, restoring = false) {
-  try { let terminal = false; while (!terminal) { const response = await fetch(`/api/runs/${encodeURIComponent(id)}`, { cache: "no-store" }); const run = await response.json(); if (!response.ok) throw new Error(run.error || `Status failed (${response.status})`); showSmoke(run); terminal = ["complete", "failed", "stopped"].includes(run.status); if (!terminal) await pause(mode === "live" ? 200 : 1000); } }
+  try { let terminal = false; while (!terminal) { const response = await fetch(`/api/runs/${encodeURIComponent(id)}`, { cache: "no-store" }); const run = await response.json(); if (!response.ok) throw new Error(run.error || `Status failed (${response.status})`); showSmoke(run); terminal = ["complete", "failed", "stopped"].includes(run.status); if (!terminal) await pause(mode === "live" ? 200 : 1000); } await refreshRunHistory({ preserveSelection: true, quiet: true }); }
   catch (error) { if (!restoring) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; } localStorage.removeItem("kvs-dashboard-run-id"); $("start-smoke").disabled = false; $("start-benchmark").disabled = false; }
 }
 
@@ -540,6 +713,17 @@ async function stopRun() {
   $("stop-run").disabled = true;
   try { const response = await fetch(`/api/runs/${encodeURIComponent(terminalRunId)}/stop`, { method: "POST", headers: { "x-kvs-csrf": bootstrap.csrfToken } }); const run = await response.json(); if (!response.ok) throw new Error(run.error || `Stop failed (${response.status})`); showSmoke(run); }
   catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("stop-run").disabled = false; }
+}
+
+async function resumeRun() {
+  if (!terminalRunId || !confirm("Resume this verified benchmark checkpoint? Completed prerequisite gates and finalized sessions will be reused. Evidence for the interrupted session will be reconciled before the next session starts; no resource will be recreated.")) return;
+  $("resume-run").disabled = true;
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(terminalRunId)}/resume`, { method: "POST", headers: { "x-kvs-csrf": bootstrap.csrfToken } });
+    const run = await response.json();
+    if (!response.ok) throw new Error(run.error || `Resume failed (${response.status})`);
+    localStorage.setItem("kvs-dashboard-run-id", run.id); showStep(5); showSmoke(run); await monitorRun(run.id, run.mode || "async");
+  } catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("resume-run").disabled = false; }
 }
 
 document.querySelectorAll('input[name="infra-mode"]').forEach(input => input.addEventListener("change", () => $("managed-fields").classList.toggle("hidden", document.querySelector('input[name="infra-mode"]:checked').value !== "managed")));
@@ -572,5 +756,9 @@ document.querySelector("main").addEventListener("input", event => { if (!event.t
 document.querySelector("main").addEventListener("change", event => { if (event.target.id !== "write-authorization") scheduleDraftSave(); });
 $("preview-button").addEventListener("click", preview); $("download").addEventListener("click", downloadSpec); $("start-smoke").addEventListener("click", startSmoke); $("start-benchmark").addEventListener("click", startCloud); $("discover-destinations").addEventListener("click", discoverDestinations);
 $("stop-run").addEventListener("click", stopRun);
+$("resume-run").addEventListener("click", resumeRun);
+$("refresh-run-history").addEventListener("click", () => refreshRunHistory({ preserveSelection: true }));
+$("run-history-status").addEventListener("change", () => { renderRunHistoryList({ preserveSelection: false }); if ($("run-history-select").value) void showHistoricalRun($("run-history-select").value); else $("run-history-detail").classList.add("hidden"); });
+$("run-history-select").addEventListener("change", () => { renderRunHistoryList({ preserveSelection: true }); void showHistoricalRun($("run-history-select").value); });
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
 syncDestinationProducts(); renderDestinationSummary(); syncLiveChartVisibility(); showStep(1); load().catch(showLoadError);

@@ -31,6 +31,26 @@ function visible(state) {
   };
 }
 
+function historyVisible(state) {
+  const run = visible(state);
+  return {
+    id: run.id,
+    kind: run.kind,
+    mode: run.mode,
+    status: run.status,
+    createdAt: run.createdAt,
+    startedAt: run.startedAt,
+    completedAt: run.completedAt,
+    targets: ["mock"],
+    sessionCount: 1,
+    completedSessions: run.summary ? 1 : 0,
+    workloadNames: ["Local functional test"],
+    currentSession: null,
+    error: run.error,
+    downloadUrl: run.downloadUrl
+  };
+}
+
 export class LocalSmokeRuns {
   constructor({ configFile = defaultConfig, outputRoot = defaultOutput, startDelayMs = 300 } = {}) {
     this.configFile = configFile;
@@ -80,6 +100,10 @@ export class LocalSmokeRuns {
   latest() {
     const state = [...this.runs.values()].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
     return state ? visible(state) : null;
+  }
+
+  list() {
+    return [...this.runs.values()].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))).map(historyVisible);
   }
 
   async execute(state, loaded) {

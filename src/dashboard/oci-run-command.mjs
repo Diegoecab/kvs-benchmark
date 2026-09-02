@@ -23,8 +23,19 @@ export async function executeOciRunCommand({ executeCommand, profile, region, co
   const deliveryDeadline = Date.now() + deliveryTimeoutSeconds * 1000;
   let executionDeadline = null;
   let lastStatus = "UNKNOWN";
+  let consecutivePollFailures = 0;
   while (true) {
-    const raw = await executeCommand("oci", ["instance-agent", "command-execution", "get", "--profile", profile, "--region", region, "--instance-id", instanceId, "--command-id", commandId, "--output", "json"], { timeout: cliTimeoutMs });
+    let raw;
+    try {
+      raw = await executeCommand("oci", ["instance-agent", "command-execution", "get", "--profile", profile, "--region", region, "--instance-id", instanceId, "--command-id", commandId, "--output", "json"], { timeout: cliTimeoutMs });
+      consecutivePollFailures = 0;
+    } catch {
+      consecutivePollFailures += 1;
+      const deadline = executionDeadline || deliveryDeadline;
+      if (Date.now() >= deadline) break;
+      await sleep(Math.min(30_000, 1000 * consecutivePollFailures));
+      continue;
+    }
     const execution = JSON.parse(raw).data || {}, status = execution["lifecycle-state"]; lastStatus = status || lastStatus;
     if (["SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELED"].includes(status)) {
       const content = execution.content || {}, stdout = content.text || "", exitCode = content["exit-code"] ?? content.exitCode ?? 0;

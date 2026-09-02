@@ -67,6 +67,12 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
         if (active) return json(response, 409, { error: "Another benchmark run is already active", active });
         return json(response, 202, cloudRuns.start(await body(request)));
       }
+      if (request.method === "GET" && url.pathname === "/api/runs") {
+        const items = [...(cloudRuns.list?.() || []), ...(localSmokeRuns.list?.() || [])]
+          .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+        const active = items.find(item => ["queued", "running", "stopping"].includes(item.status)) || null;
+        return json(response, 200, { schemaVersion: 1, activeRunId: active?.id || null, count: items.length, items });
+      }
       if (request.method === "GET" && url.pathname === "/api/runs/active") {
         const active = cloudRuns.active?.() || localSmokeRuns.active?.() || null;
         const candidates = [cloudRuns.latest?.(), localSmokeRuns.latest?.()].filter(Boolean).sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
@@ -76,6 +82,11 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
         const id = decodeURIComponent(url.pathname.split("/")[3]), file = findDownload(id), stat = fs.statSync(file);
         response.writeHead(200, { "content-type": "application/zip", "content-length": stat.size, "content-disposition": `attachment; filename="${path.basename(file)}"`, "cache-control": "no-store", "x-content-type-options": "nosniff" });
         return fs.createReadStream(file).pipe(response);
+      }
+      if (request.method === "POST" && /^\/api\/runs\/[^/]+\/resume$/.test(url.pathname)) {
+        if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
+        const id = decodeURIComponent(url.pathname.split("/")[3]);
+        return json(response, 202, cloudRuns.resume(id));
       }
       if (request.method === "POST" && /^\/api\/runs\/[^/]+\/stop$/.test(url.pathname)) {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
