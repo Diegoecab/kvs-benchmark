@@ -7,6 +7,7 @@ import { createZipFile, inspectFile } from "./artifact.mjs";
 import { previewMatrix } from "./preview.mjs";
 import { executeOciRunCommand } from "./oci-run-command.mjs";
 import { readRunStates, stateFileName, writeStateAtomic } from "./file-state.mjs";
+import { writeWorkloadStageSummary } from "./workload-stages.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const configDirectory = path.join(repositoryRoot, "configs");
@@ -73,7 +74,20 @@ function resumable(state) {
     && new Set(certificates.map(item => item.observedSha256)).size === 1
     && Number(state.sessionResults?.length || 0) < Number(state.spec?.matrix?.length || 0);
 }
+function hydratePersistedStageSummaries(state) {
+  for (const result of state.sessionResults || []) {
+    if (Object.keys(result.stageSummaries || {}).length) continue;
+    const session = state.spec?.matrix?.find(item => item.id === result.id), summaries = {};
+    if (!session) continue;
+    for (const target of state.spec.enabled || []) {
+      const file = path.join(state.output, "evidence", "run", session.id, target, "stage-summary.json");
+      if (fs.existsSync(file)) { try { summaries[target] = JSON.parse(fs.readFileSync(file, "utf8")); } catch {} }
+    }
+    if (Object.keys(summaries).length) result.stageSummaries = summaries;
+  }
+}
 function visible(state) {
+  hydratePersistedStageSummaries(state);
   return { schemaVersion: 1, id: state.id, kind: "cloud-benchmark", mode: state.spec.mode, status: state.status, canStop: ["queued", "running", "stopping"].includes(state.status) && state.controlOwnerPid === process.pid, canResume: resumable(state), createdAt: state.createdAt, startedAt: state.startedAt || null, completedAt: state.completedAt || null, stages: state.stages, targetStatus: state.targetStatus, sharedStartAt: state.sharedStartAt || null, preloadStartAt: state.preloadStartAt || null, preloadSummaries: state.preloadSummaries || null, currentSession: state.currentSession || null, matrix: state.spec.matrix, resourceInventory: state.resourceInventory || null, certificates: state.certificates || null, summaries: state.summaries || null, sessionResults: state.sessionResults || [], targetMetrics: state.targetMetrics || {}, logs: state.logs || [], error: state.error || null, output: state.outputRelative, downloadUrl: state.archiveFile ? `/api/runs/${encodeURIComponent(state.id)}/download` : null };
 }
 
@@ -284,6 +298,13 @@ export class CliCloudAdapter {
 
 function readJson(file) { return JSON.parse(fs.readFileSync(file, "utf8")); }
 function allFiles(directory) { return fs.readdirSync(directory, { recursive: true, withFileTypes: true }).filter(item => item.isFile()).map(item => path.join(item.parentPath || item.path, item.name)); }
+async function workloadStageSummaries(state, session) {
+  const pairs = await Promise.all(state.spec.enabled.map(async target => {
+    const directory = path.join(state.output, "evidence", "run", session.id, target);
+    return [target, fs.existsSync(path.join(directory, "operations.ndjson")) ? await writeWorkloadStageSummary(directory, session.loadSchedule || []) : null];
+  }));
+  return Object.fromEntries(pairs.filter(([, summary]) => summary));
+}
 async function packageRun(state) {
   const preloadRows = Object.entries(state.preloadSummaries || {}).map(([target, value]) => `<tr><td>${target.toUpperCase()}</td><td>${value.actualStartAt}</td><td>${value.startSkewMs ?? "-"}</td><td>${value.completed}/${value.requested}</td><td>${value.failures}</td><td>${value.successfulOperationsPerSecond ?? "-"}</td><td>${value.latencyMs?.p95 ?? "-"}</td><td>${value.latencyMs?.p99 ?? "-"}</td><td>${value.writeUnits ?? "-"}</td></tr>`).join("");
   const preloadSection = preloadRows ? `<h2>Canonical preload performance</h2><table><thead><tr><th>Target</th><th>Actual start UTC</th><th>Start skew ms</th><th>Completed</th><th>Failures</th><th>Successful ops/s</th><th>P95 ms</th><th>P99 ms</th><th>Write units</th></tr></thead><tbody>${preloadRows}</tbody></table>` : "";
@@ -398,12 +419,13 @@ export class CloudAcceptanceRuns {
     appendLog(state, { level: "warning", stage: "workload", message: `Collecting final evidence for interrupted session ${current.id} before continuing the matrix` }); this.persist(state);
     await this.adapter.collect(state.spec, `run/${current.id}`);
     const summaries = Object.fromEntries(state.spec.enabled.map(target => [target, readJson(path.join(state.output, "evidence", "run", current.id, target, "summary.json"))]));
+    const stageSummaries = await workloadStageSummaries(state, session);
     const values = Object.values(summaries);
     if (values.some(value => Number(value.accounted) !== Number(value.scheduled))) throw new Error(`Interrupted session ${current.id} evidence is not fully accounted`);
     if (new Set(values.map(value => value.configSha256)).size !== 1 || new Set(values.map(value => value.scheduledStartAt)).size !== 1 || values[0]?.scheduledStartAt !== state.sharedStartAt) throw new Error(`Interrupted session ${current.id} evidence does not match its immutable configuration or shared T0`);
     state.summaries = summaries;
     state.targetMetrics = Object.fromEntries(Object.entries(summaries).map(([target, value]) => [target, { completed: value.completed, scheduled: value.scheduled, failed: value.failed, operationsPerSecond: value.achievedOperationsPerSecond, inFlight: 0, observedMaxInFlight: value.concurrency?.observedAtOperationStart?.max ?? null, latestLatencyMs: value.successfulServiceLatencyMs?.max ?? null, p95: value.successfulServiceLatencyMs?.p95 ?? null, p99: value.successfulServiceLatencyMs?.p99 ?? null, max: value.successfulServiceLatencyMs?.max ?? null, provisional: false }]));
-    state.sessionResults.push({ id: session.id, configFile: session.configFile, repetition: session.repetition, sharedStartAt: state.sharedStartAt, summaries });
+    state.sessionResults.push({ id: session.id, configFile: session.configFile, repetition: session.repetition, sharedStartAt: state.sharedStartAt, summaries, stageSummaries });
     state.targetStatus = Object.fromEntries(state.spec.enabled.map(name => [name, "completed"]));
     for (const [target, summary] of Object.entries(summaries)) appendLog(state, { level: summary.failed ? "error" : "success", stage: "workload", target, message: `Recovered session; ${summary.completed}/${summary.scheduled} operations; ${summary.failed} failed; p95 ${summary.successfulServiceLatencyMs?.p95 ?? "-"} ms` });
     this.persist(state);
@@ -459,12 +481,13 @@ export class CloudAcceptanceRuns {
           try { await this.adapter.collect(spec, `run/${session.id}`); }
           catch (collectionError) { throw new Error(stageError ? `${stageError.message}; final evidence collection also failed: ${collectionError.message}` : collectionError.message); }
           const summaries = Object.fromEntries(spec.enabled.map(target => [target, readJson(path.join(state.output, "evidence", "run", session.id, target, "summary.json"))]));
+          const stageSummaries = await workloadStageSummaries(state, session);
           const values = Object.values(summaries);
           if (values.some(value => Number(value.accounted) !== Number(value.scheduled))) throw new Error(`${session.id} evidence is not fully accounted`);
           if (new Set(values.map(value => value.configSha256)).size !== 1 || new Set(values.map(value => value.scheduledStartAt)).size !== 1) throw new Error(`${session.id} evidence does not match its immutable configuration or shared T0`);
           state.summaries = summaries;
           state.targetMetrics = Object.fromEntries(Object.entries(summaries).map(([target, value]) => [target, { completed: value.completed, scheduled: value.scheduled, failed: value.failed, operationsPerSecond: value.achievedOperationsPerSecond, inFlight: 0, observedMaxInFlight: value.concurrency?.observedAtOperationStart?.max ?? null, latestLatencyMs: value.successfulServiceLatencyMs?.max ?? null, p95: value.successfulServiceLatencyMs?.p95 ?? null, p99: value.successfulServiceLatencyMs?.p99 ?? null, max: value.successfulServiceLatencyMs?.max ?? null, provisional: false }]));
-          state.sessionResults.push({ id: session.id, configFile: session.configFile, repetition: session.repetition, sharedStartAt: state.sharedStartAt, summaries });
+          state.sessionResults.push({ id: session.id, configFile: session.configFile, repetition: session.repetition, sharedStartAt: state.sharedStartAt, summaries, stageSummaries });
           state.targetStatus = Object.fromEntries(spec.enabled.map(name => [name, "completed"]));
           for (const [target, summary] of Object.entries(summaries)) appendLog(state, { level: summary.failed ? "error" : "success", stage: "workload", target, message: `Session complete; ${summary.completed}/${summary.scheduled} operations; p95 ${summary.successfulServiceLatencyMs?.p95 ?? "-"} ms; p99 ${summary.successfulServiceLatencyMs?.p99 ?? "-"} ms` });
         }
