@@ -10,6 +10,7 @@ Use the repository's dashboard pipeline as the source of truth. Do not recreate 
 ## Choose the operation
 
 - For status or diagnosis, perform read-only inspection of the active run, its `.dashboard-state.json`, logs, control-plane status, and collected evidence. Do not launch, retry, resize, delete, or rotate credentials.
+- For a local status snapshot, run `node .codex/skills/kvs-benchmark-operator/scripts/snapshot.mjs` from the repository root. Pass `--run-id=<id>` only when the user requests a non-active run.
 - For a launch, validate the selected targets, immutable image digest, workload matrix, repetitions, T0 lead, evidence buckets, and explicit dataset-write authorization. Use `node scripts/run-cloud-benchmark.mjs --spec=<file>` or the dashboard API.
 - For live monitoring, prefer `GET /api/runs/active` and `GET /api/runs/<id>` when the dashboard is running. Otherwise monitor the controller process and `.kvs/cloud-runs/<id>/.dashboard-state.json`.
 - For a report, use only completed evidence. Distinguish provisional live samples from final summaries.
