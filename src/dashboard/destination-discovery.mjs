@@ -89,7 +89,7 @@ export async function discoverDestinations({ awsProfile, awsRegion = "us-east-1"
   return {
     schemaVersion: 1, discoveredAt: new Date().toISOString(), discoveryErrors, recentEvidenceTables,
     awsTables: awsDescriptions.map(raw => awsTableRow(parse(raw).Table || {}, scalableTargets)).sort((a, b) => a.name.localeCompare(b.name)), compartments: adbCompartments, adbCompartments, ndcsCompartments,
-    autonomousDatabases: adbData.map(item => ({ id: item.id, name: item["display-name"], dbName: item["db-name"], state: item["lifecycle-state"], cpuCoreCount: item["cpu-core-count"], computeCount: item["compute-count"] })).sort((a, b) => a.name.localeCompare(b.name)),
+    autonomousDatabases: adbData.map(item => ({ id: item.id, name: item["display-name"], dbName: item["db-name"], state: item["lifecycle-state"], dbVersion: item["db-version"], workload: item["db-workload"], computeModel: item["compute-model"], cpuCoreCount: item["cpu-core-count"], computeCount: item["compute-count"], licenseModel: item["license-model"] })).sort((a, b) => a.name.localeCompare(b.name)),
     adbTables: [...new Map(adbTables.map(item => [item.name, item])).values()].sort((a, b) => a.name.localeCompare(b.name)), adbRuntimeDatabaseId: adbRuntime.databaseId || null,
     adbEvidenceBuckets: (parse(adbBucketsRaw).data || []).map(item => item.name).sort(),
     ndcsEvidenceBuckets: (parse(ndcsBucketsRaw).data || []).map(item => item.name).sort(),

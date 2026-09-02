@@ -14,7 +14,7 @@ import { distribution } from "../core/statistics.mjs";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const configDirectory = path.join(repositoryRoot, "configs");
 const defaultOutput = path.join(repositoryRoot, ".kvs", "cloud-runs");
-const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:0f8c8d29a6475c7a51f4774210fe94dd8fab7d472c62428e9f6b694f355a921e";
+const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:6eb0c3d31123dfec7b49cd6c319d0ebc781efe4b397b2a38997be6249577188b";
 const stages = ["runner-readiness", "resource-validation", "dataset-preload", "dataset-certification", "dataset-hash-match", "t0-scheduled", "workload", "evidence-collection", "acceptance-validation", "package-generation"];
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const terminalStatuses = new Set(["complete", "failed", "stopped"]);
@@ -113,7 +113,7 @@ function validate(input) {
   }
   if (enabled.includes("adb")) {
     const adbRunners = normalizeTargetRunners(target.adb, { count: result.loadGeneratorCount, idPattern: /^ocid1\.instance\./, label: "ADB", requireCompartment: true });
-    Object.assign(result, { adbOciProfile: safe(target.adb.profile, /^[A-Za-z0-9_.-]+$/, "ADB OCI profile"), adbOciRegion: safe(target.adb.region, /^[a-z]{2}-[a-z]+-\d$/, "ADB OCI region"), adbTable: safe(target.adb.resource, /^[A-Za-z0-9_.-]+$/, "ADB table"), adbRunners, adbRunner: adbRunners[0].id, adbRunnerCompartment: adbRunners[0].compartmentId, adbBucket: safe(target.adb.evidenceBucket, /^[A-Za-z0-9_.-]+$/, "ADB evidence bucket"), adbDatabaseId: target.adb.databaseId ? safe(target.adb.databaseId, /^ocid1\.autonomousdatabase\./, "Autonomous Database") : null });
+    Object.assign(result, { adbOciProfile: safe(target.adb.profile, /^[A-Za-z0-9_.-]+$/, "ADB OCI profile"), adbOciRegion: safe(target.adb.region, /^[a-z]{2}-[a-z]+-\d$/, "ADB OCI region"), adbTable: safe(target.adb.resource, /^[A-Za-z0-9_.-]+$/, "ADB table"), adbRunners, adbRunner: adbRunners[0].id, adbRunnerCompartment: adbRunners[0].compartmentId, adbBucket: safe(target.adb.evidenceBucket, /^[A-Za-z0-9_.-]+$/, "ADB evidence bucket"), adbDatabaseId: target.adb.databaseId ? safe(target.adb.databaseId, /^ocid1\.autonomousdatabase\./, "Autonomous Database") : null, adbDatabaseVersion: target.adb.databaseVersion ? safe(target.adb.databaseVersion, /^(?:19c|26ai)$/, "Autonomous Database version") : null, adbComputeModel: target.adb.computeModel ? safe(target.adb.computeModel, /^(?:ECPU|OCPU)$/, "Autonomous Database compute model") : null, adbComputeCount: Number.isFinite(Number(target.adb.computeCount)) ? Number(target.adb.computeCount) : null, adbLicenseModel: target.adb.licenseModel ? safe(target.adb.licenseModel, /^(?:BRING_YOUR_OWN_LICENSE|LICENSE_INCLUDED)$/, "Autonomous Database license model") : null, adbWorkload: target.adb.workload ? safe(target.adb.workload, /^(?:OLTP|DW|AJD|APEX|LH)$/, "Autonomous Database workload") : null });
   }
   if (enabled.includes("ndcs")) {
     const ndcsRunners = normalizeTargetRunners(target.ndcs, { count: result.loadGeneratorCount, idPattern: /^ocid1\.instance\./, label: "OCI NoSQL", requireCompartment: true });
@@ -189,7 +189,7 @@ function resourceInventory(spec, observed = {}) {
   const inventory = {};
   const runners = target => targetRunners(spec, target).map((runner, index) => ({ source: sourceKey(index), ...runner }));
   if (spec.enabled.includes("aws")) inventory.aws = { region: spec.awsRegion, loadGeneratorCount: runners("aws").length, runnerInstances: runners("aws"), runnerInstanceId: spec.awsRunner, tableName: spec.awsTable, tableArn: observed.aws?.TableArn || null };
-  if (spec.enabled.includes("adb")) inventory.adb = { region: spec.adbOciRegion, loadGeneratorCount: runners("adb").length, runnerInstances: runners("adb"), runnerInstanceOcid: spec.adbRunner, autonomousDatabaseOcid: spec.adbDatabaseId || null, tableName: spec.adbTable };
+  if (spec.enabled.includes("adb")) inventory.adb = { region: spec.adbOciRegion, loadGeneratorCount: runners("adb").length, runnerInstances: runners("adb"), runnerInstanceOcid: spec.adbRunner, autonomousDatabaseOcid: spec.adbDatabaseId || null, databaseVersion: spec.adbDatabaseVersion || null, computeModel: spec.adbComputeModel || null, computeCount: spec.adbComputeCount || null, licenseModel: spec.adbLicenseModel || null, workload: spec.adbWorkload || null, tableName: spec.adbTable };
   if (spec.enabled.includes("ndcs")) inventory.ndcs = { region: spec.ndcsOciRegion, loadGeneratorCount: runners("ndcs").length, runnerInstances: runners("ndcs"), runnerInstanceOcid: spec.ndcsRunner, compartmentOcid: spec.ndcsCompartment, tableName: spec.ndcsTable, tableOcid: observed.ndcs?.id || observed.ndcs?.Id || null };
   return inventory;
 }

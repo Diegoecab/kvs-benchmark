@@ -15,7 +15,7 @@ for (const required of ["profile", "region", "compartment-id", "runner-id", "run
   if (!options[required]) throw new Error(`Missing --${required}`);
 }
 
-const image = options.image || "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:55ce8eeccce8e8e698ec7b672e491d0e99c28813a2d8ad93ef44ae85330131e0";
+const image = options.image || "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:6eb0c3d31123dfec7b49cd6c319d0ebc781efe4b397b2a38997be6249577188b";
 const destination = options.destination || "/opt/kvs-dashboard/adb-api.runtime.json";
 const controlDirectory = path.resolve(options["control-directory"] || ".run-command-control");
 const executeCommand = async (file, args, execOptions = {}) => {
