@@ -66,13 +66,15 @@ function appendLog(state, { level = "info", stage = "pipeline", target = "contro
 function resumable(state) {
   const prerequisiteStages = ["runner-readiness", "resource-validation", "dataset-preload", "dataset-certification", "dataset-hash-match", "t0-scheduled"];
   const certificates = Object.values(state.certificates || {});
-  return state.status === "failed"
-    && state.stages?.find(item => item.name === "workload")?.status === "failed"
-    && prerequisiteStages.every(name => state.stages?.find(item => item.name === name)?.status === "complete")
+  const prerequisitesPassed = prerequisiteStages.every(name => state.stages?.find(item => item.name === name)?.status === "complete");
+  const workloadInterrupted = state.status === "failed" && state.stages?.find(item => item.name === "workload")?.status === "failed" && Number(state.sessionResults?.length || 0) < Number(state.spec?.matrix?.length || 0);
+  const matrixFinalized = Number(state.sessionResults?.length || 0) === Number(state.spec?.matrix?.length || 0) && Number(state.spec?.matrix?.length || 0) > 0;
+  const packagingInterrupted = matrixFinalized && ["failed", "running"].includes(state.status) && (state.status !== "running" || state.controlOwnerPid !== process.pid);
+  return (workloadInterrupted || packagingInterrupted)
+    && prerequisitesPassed
     && certificates.length === state.spec?.enabled?.length
     && certificates.every(item => item.passed === true)
-    && new Set(certificates.map(item => item.observedSha256)).size === 1
-    && Number(state.sessionResults?.length || 0) < Number(state.spec?.matrix?.length || 0);
+    && new Set(certificates.map(item => item.observedSha256)).size === 1;
 }
 function hydratePersistedStageSummaries(state) {
   for (const result of state.sessionResults || []) {

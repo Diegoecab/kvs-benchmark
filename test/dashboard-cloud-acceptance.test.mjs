@@ -162,3 +162,16 @@ test("dashboard attaches read-only to an externally controlled active run and re
   assert.equal(observer.get(id).targetMetrics.aws.completed, 25);
   assert.equal(JSON.parse(fs.readFileSync(path.join(output, ".dashboard-state.json"), "utf8")).status, "running");
 });
+
+test("a detached post-workload checkpoint can regenerate its package without rerunning cloud sessions", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-cloud-package-resume-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const id = "cloud-detached-package", output = path.join(root, id), sessionId = "session-r1";
+  const names = ["runner-readiness", "resource-validation", "dataset-preload", "dataset-certification", "dataset-hash-match", "t0-scheduled", "workload", "evidence-collection", "acceptance-validation", "package-generation"];
+  const summary = { target: "aws", configSha256: hash, scheduledStartAt: "2026-01-01T00:00:00.000Z", actualStartAt: "2026-01-01T00:00:00.000Z", startSkewMs: 0, scheduled: 20, accounted: 20, completed: 20, failed: 0, harnessPassed: true, successfulServiceLatencyMs: { p95: 1, p99: 2, max: 3 } };
+  const state = { id, output, outputRelative: `.kvs/cloud-runs/${id}`, spec: { mode: "async", enabled: ["aws"], matrix: [{ id: sessionId, configFile: "fixture.json", repetition: 1 }], localOutput: output }, status: "running", controlOwnerPid: -1, createdAt: "2026-01-01T00:00:00.000Z", startedAt: "2026-01-01T00:00:01.000Z", stages: names.map(name => ({ name, status: name === "package-generation" ? "running" : "complete", startedAt: "2026-01-01T00:00:01.000Z", completedAt: name === "package-generation" ? null : "2026-01-01T00:00:02.000Z", detail: null })), targetStatus: { aws: "completed" }, certificates: { aws: { observedSha256: hash, passed: true } }, sessionResults: [{ id: sessionId, configFile: "fixture.json", repetition: 1, sharedStartAt: summary.scheduledStartAt, summaries: { aws: summary } }], targetMetrics: {}, logs: [] };
+  writeStateAtomic(output, state);
+  const runs = new CloudAcceptanceRuns({ outputRoot: root, adapter: {} }); assert.equal(runs.get(id).canResume, true); runs.resume(id);
+  let current = runs.get(id); for (let attempt = 0; attempt < 100 && current.status !== "complete"; attempt += 1) { await new Promise(resolve => setTimeout(resolve, 10)); current = runs.get(id); }
+  assert.equal(current.status, "complete"); assert.equal(current.sessionResults.length, 1); assert.ok(fs.existsSync(runs.download(id)));
+  assert.ok(current.stages.find(stage => stage.name === "workload").attempts.length >= 1);
+});
