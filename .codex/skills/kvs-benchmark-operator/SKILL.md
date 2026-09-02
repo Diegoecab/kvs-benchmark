@@ -1,0 +1,40 @@
+---
+name: kvs-benchmark-operator
+description: Operate and monitor this repository's AWS DynamoDB, ADB DynamoDB API, and OCI NoSQL benchmarks through the existing dashboard pipeline. Use for benchmark launch, live status, evidence summaries, failure diagnosis, or authorized post-run cleanup; do not use for unrelated cloud provisioning.
+---
+
+# KVS benchmark operator
+
+Use the repository's dashboard pipeline as the source of truth. Do not recreate provider commands or benchmark accounting when the existing controller supports the requested action.
+
+## Choose the operation
+
+- For status or diagnosis, perform read-only inspection of the active run, its `.dashboard-state.json`, logs, control-plane status, and collected evidence. Do not launch, retry, resize, delete, or rotate credentials.
+- For a launch, validate the selected targets, immutable image digest, workload matrix, repetitions, T0 lead, evidence buckets, and explicit dataset-write authorization. Use `node scripts/run-cloud-benchmark.mjs --spec=<file>` or the dashboard API.
+- For live monitoring, prefer `GET /api/runs/active` and `GET /api/runs/<id>` when the dashboard is running. Otherwise monitor the controller process and `.kvs/cloud-runs/<id>/.dashboard-state.json`.
+- For a report, use only completed evidence. Distinguish provisional live samples from final summaries.
+
+## Live progress
+
+Report stage changes immediately. During workload sessions, summarize per target:
+
+- completed, scheduled, and failed operations;
+- achieved operations/s and offered operations/s;
+- current in-flight requests;
+- rolling P95 while provisional;
+- session index, profile, repetition, duration, and shared T0.
+
+Poll without blocking user communication for more than 60 seconds. Avoid repeating unchanged metrics; provide a short heartbeat when a control-plane wait is materially long.
+
+Preload performance is live only at stage level. After `dataset-preload` completes, read every `evidence/preload/<target>/preload-summary.json` and compare start skew, duration, requested/completed/failures, attempted and successful operations/s, latency percentiles, attempts/retries, and write units. Treat absent consumed-capacity data as unavailable rather than zero consumption.
+
+## Acceptance and safety
+
+- Do not call the benchmark complete until all selected sessions pass accounting, service acceptance, evidence collection, manifest generation, and package generation.
+- A failed dataset certificate or hash comparison blocks workloads. Diagnose from evidence; do not silently bypass the gate.
+- A delivery timeout can race with late execution. Inspect provider command state before retrying so commands do not overlap.
+- Keep credentials and private runtime files out of output, logs, commits, and specifications intended for reuse.
+- Resource cleanup requires explicit authorization and exact targets. Never delete OCI tables as an inferred benchmark cleanup step. Delete any temporary resource only after the final package is verified and only when the user requested that cleanup.
+- Keep the workflow portable: use Node.js and provider CLIs; do not require an operating-system-specific shell for dashboard operation.
+
+At handoff, provide the run ID, terminal state, targets, completed session count, preload comparison when enabled, key workload results, evidence/package path, cleanup performed, and challenges encountered.
