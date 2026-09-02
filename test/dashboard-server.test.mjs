@@ -38,6 +38,7 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   const startedCloud = await fetch(`${origin}/api/cloud-acceptance`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ writeAuthorization: true }) });
   assert.equal(startedCloud.status, 202); assert.equal((await startedCloud.json()).id, cloud.id);
   const duplicateCloud = await fetch(`${origin}/api/cloud-acceptance`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ writeAuthorization: true }) }); assert.equal(duplicateCloud.status, 409); assert.equal((await duplicateCloud.json()).active.id, cloud.id);
+  const localDuringCloud = await fetch(`${origin}/api/local-smoke`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ mode: "async" }) }); assert.equal(localDuringCloud.status, 409); assert.equal((await localDuringCloud.json()).active.id, cloud.id);
   const activeRun = await fetch(`${origin}/api/runs/active`).then(response => response.json()); assert.equal(activeRun.active.id, cloud.id); assert.equal(activeRun.latest.id, cloud.id);
   const cloudStatus = await fetch(`${origin}/api/runs/${cloud.id}`).then(response => response.json()); assert.equal(cloudStatus.kind, "cloud-acceptance");
   const deniedStop = await fetch(`${origin}/api/runs/${cloud.id}/stop`, { method: "POST" }); assert.equal(deniedStop.status, 403);

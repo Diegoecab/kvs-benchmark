@@ -360,7 +360,10 @@ function renderReview() {
 function setRunLock(locked) {
   runLocked = Boolean(locked);
   document.querySelectorAll("[data-go-step]").forEach((button, index) => { button.disabled = runLocked && index < 4; });
-  for (const id of ["preview-button", "start-smoke", "start-benchmark", "write-authorization"]) $(id).disabled = runLocked;
+  for (const id of ["preview-button", "start-smoke", "start-benchmark", "write-authorization"]) {
+    $(id).disabled = runLocked;
+    $(id).setAttribute("aria-disabled", String(runLocked));
+  }
   $("download").disabled = runLocked || !lastSpec;
   document.querySelector(".stepper").classList.toggle("run-locked", runLocked);
   if (runLocked && currentStep !== 5) showStep(5);
@@ -502,12 +505,14 @@ async function monitorRun(id, mode, restoring = false) {
 }
 
 async function startSmoke() {
+  if (runLocked) return;
   $("start-smoke").disabled = true; $("start-benchmark").disabled = true; $("download-output").classList.add("hidden"); $("smoke-status").className = "callout"; $("smoke-status").textContent = "Submitting local smoke test...";
   try { const mode = runMode(); const response = await fetch("/api/local-smoke", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify({ mode }) }); const run = await response.json(); if (!response.ok) throw new Error(run.error || `Start failed (${response.status})`); localStorage.setItem("kvs-dashboard-run-id", run.id); showSmoke(run); await monitorRun(run.id, mode); }
   catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("start-smoke").disabled = false; $("start-benchmark").disabled = false; }
 }
 
 async function startCloud() {
+  if (runLocked) return;
   $("start-smoke").disabled = true; $("start-benchmark").disabled = true; $("download-output").classList.add("hidden"); $("smoke-status").className = "callout"; $("smoke-status").textContent = "Submitting cloud acceptance pipeline...";
   try { const spec = specification(); const response = await fetch("/api/cloud-acceptance", { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": bootstrap.csrfToken }, body: JSON.stringify(spec) }); const run = await response.json(); if (response.status === 409 && run.active) { localStorage.setItem("kvs-dashboard-run-id", run.active.id); showStep(5); showSmoke(run.active); await monitorRun(run.active.id, run.active.mode || "async"); return; } if (!response.ok) throw new Error(run.error || `Start failed (${response.status})`); localStorage.setItem("kvs-dashboard-run-id", run.id); showSmoke(run); await monitorRun(run.id, runMode()); }
   catch (error) { $("smoke-status").className = "callout error"; $("smoke-status").textContent = error.message; $("start-smoke").disabled = false; $("start-benchmark").disabled = false; }

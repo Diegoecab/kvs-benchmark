@@ -57,14 +57,14 @@ export function createDashboardServer({ token = crypto.randomBytes(24).toString(
       }
       if (request.method === "POST" && url.pathname === "/api/local-smoke") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
-        const active = localSmokeRuns.active?.();
-        if (active) return json(response, 409, { error: "A local smoke test is already running", active });
+        const active = cloudRuns.active?.() || localSmokeRuns.active?.();
+        if (active) return json(response, 409, { error: "Another benchmark run is already active", active });
         return json(response, 202, localSmokeRuns.start(await body(request)));
       }
       if (request.method === "POST" && url.pathname === "/api/cloud-acceptance") {
         if (request.headers["x-kvs-csrf"] !== token) return json(response, 403, { error: "Invalid dashboard token" });
-        const active = cloudRuns.active?.();
-        if (active) return json(response, 409, { error: "A cloud acceptance run is already active", active });
+        const active = cloudRuns.active?.() || localSmokeRuns.active?.();
+        if (active) return json(response, 409, { error: "Another benchmark run is already active", active });
         return json(response, 202, cloudRuns.start(await body(request)));
       }
       if (request.method === "GET" && url.pathname === "/api/runs/active") {

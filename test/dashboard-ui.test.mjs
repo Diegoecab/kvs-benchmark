@@ -41,6 +41,8 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /id="stop-run"/); assert.match(app, /async function stopRun/); assert.match(app, /infrastructure, and collected evidence will be preserved/i);
   assert.match(app, /CURRENT EXECUTION/); assert.match(app, /Current session/); assert.match(app, /Complete matrix/);
   assert.match(app, /function setRunLock/); assert.match(app, /Active run monitor/); assert.match(app, /if \(runLocked && Number\(step\) !== 5\) return/);
+  assert.ok((app.match(/if \(runLocked\) return;/g) || []).length >= 2);
+  assert.match(app, /setAttribute\("aria-disabled", String\(runLocked\)\)/);
   assert.match(app, /suppressPreview/); assert.match(theme, /Compact terminal workspace/); assert.doesNotMatch(html, /window-controls/);
   assert.match(app, /accounted \* 100 \/ metric\.scheduled/);
   assert.match(app, /function renderExecutionLog/); assert.match(app, /class="pipeline-track"/); assert.match(app, /aria-valuenow/); assert.match(app, /run-light/);
