@@ -299,7 +299,14 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
 }
 
 function awsCommands(spec, action, output, startAt, session = spec.matrix[0], runnerContext = { index: 0, count: 1 }) {
-  if (action === "preflight") return ["set -eu", "podman --version", "test -d /opt/kvs-dashboard", `podman image exists ${spec.image}`];
+  if (action === "preflight") return [
+    "set -eu",
+    "podman --version",
+    "test -d /opt/kvs-dashboard",
+    `podman image exists ${spec.image}`,
+    `/usr/local/bin/aws dynamodb describe-table --region ${spec.awsRegion} --table-name ${spec.awsTable} >/dev/null || { echo "AWS runner cannot reach ${spec.awsTable}; verify its instance-role and DynamoDB VPC endpoint policies include this table ARN" >&2; exit 21; }`,
+    `printf '%s\n' "ready $(date -u +%FT%TZ) $(hostname)" | /usr/local/bin/aws s3 cp - s3://${spec.bucket}/results/${spec.runId}/preflight/aws${sourceRemote(spec, "aws", runnerContext.index)}/ready.txt --region ${spec.awsRegion} --only-show-errors || { echo "AWS runner cannot publish evidence under the permitted results/ prefix" >&2; exit 22; }`,
+  ];
   const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt} --shard-count=${runnerContext.count} --shard-index=${runnerContext.index}` : action === "preload" ? `preload --rate=${spec.preloadRate} --max-inflight=${spec.preloadMaxInflight}${startAt ? ` --start-at=${startAt}` : ""}` : `${action} --rate=20 --max-inflight=16`;
   const prefix = `results/${spec.runId}/${action}/aws${isRun ? sourceRemote(spec, "aws", runnerContext.index) : ""}`;
   const invocation = `podman run --rm --network host -e AWS_REGION=${spec.awsRegion} -v $root:/app/results:Z $image ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=aws --table=${spec.awsTable} --output=results`;

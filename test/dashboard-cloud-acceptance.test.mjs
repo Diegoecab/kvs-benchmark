@@ -112,6 +112,8 @@ test("cloud adapter source remains platform-neutral", () => {
   assert.doesNotMatch(source, /completed=\$\(grep -c/);
   assert.match(source, /startDelayMs \+ workloadMs \+ 15 \* 60_000/);
   assert.doesNotMatch(source, /attempt < 450/);
+  assert.match(source, /verify its instance-role and DynamoDB VPC endpoint policies include this table ARN/);
+  assert.match(source, /cannot publish evidence under the permitted results\/ prefix/);
 });
 
 test("AWS polling tolerates a transient local control-plane failure", async t => {

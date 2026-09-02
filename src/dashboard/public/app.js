@@ -19,8 +19,9 @@ let terminalLogs = [];
 let terminalClearedCount = 0;
 let terminalPaused = false;
 let runHistory = [];
-let runHistoryRefreshAt = 0;
 let runHistoryPending = false;
+let runHistoryPage = 1;
+const runHistoryPageSize = 5;
 let stageBrowserRunId = null;
 let selectedStageKey = null;
 let stageChartSession = null;
@@ -126,6 +127,7 @@ async function load() {
     void monitorRun(runId, restoredRun?.mode || "async", true);
   }
   await refreshRunHistory({ preserveSelection: true });
+  setInterval(() => void syncServerActiveRun(), 5000);
   suppressPreview = false;
 }
 
@@ -310,7 +312,9 @@ function elapsedLabel(run) {
 }
 function filteredRunHistory() {
   const status = value("run-history-status");
-  return runHistory.filter(run => status === "all" || run.status === status);
+  if (status === "all") return runHistory;
+  if (status === "non-failed") return runHistory.filter(run => run.status !== "failed");
+  return runHistory.filter(run => run.status === status);
 }
 function renderRunHistoryList({ preserveSelection = true } = {}) {
   const select = $("run-history-select"), previous = preserveSelection ? select.value : "", runs = filteredRunHistory();
@@ -318,8 +322,24 @@ function renderRunHistoryList({ preserveSelection = true } = {}) {
   if (previous && runs.some(run => run.id === previous)) select.value = previous;
   else if (runs.length) select.value = runs[0].id;
   else select.append(new Option("No runs match this filter", ""));
-  $("run-history-list").innerHTML = runs.slice(0, 8).map(run => { const completed = `${number(run.completedSessions)} / ${number(run.sessionCount)}`; return `<button type="button" class="run-history-row${select.value === run.id ? " selected" : ""}" data-run-id="${escapeHtml(run.id)}"><span class="run-history-state ${escapeHtml(run.status)}">${escapeHtml(run.status.toUpperCase())}</span><span><b>${escapeHtml(run.id)}</b><small>${escapeHtml(runKindLabel(run.kind))} · ${escapeHtml(new Date(run.createdAt).toLocaleString())}</small></span><span>${(run.targets || []).map(target => `<i title="${escapeHtml(runTargetLabel(target))}">${providerMark(target)}</i>`).join("")}</span><span><b>${escapeHtml(completed)}</b><small>sessions</small></span><span><b>${escapeHtml(elapsedLabel(run))}</b><small>elapsed</small></span></button>`; }).join("") || '<p class="run-history-empty">No executions match this filter.</p>';
+  const pageCount = Math.max(1, Math.ceil(runs.length / runHistoryPageSize));
+  if (preserveSelection && select.value) { const selectedIndex = runs.findIndex(run => run.id === select.value); if (selectedIndex >= 0) runHistoryPage = Math.floor(selectedIndex / runHistoryPageSize) + 1; }
+  runHistoryPage = Math.min(Math.max(1, runHistoryPage), pageCount);
+  const offset = (runHistoryPage - 1) * runHistoryPageSize, visibleRuns = runs.slice(offset, offset + runHistoryPageSize);
+  $("run-history-summary").textContent = `${number(runs.length)} execution${runs.length === 1 ? "" : "s"} · ${number(runs.filter(run => !terminalRunStatuses.has(run.status)).length)} active`;
+  $("run-history-page-summary").textContent = runs.length ? `${number(offset + 1)}–${number(Math.min(offset + runHistoryPageSize, runs.length))} of ${number(runs.length)} · page ${number(runHistoryPage)} of ${number(pageCount)}` : "No executions";
+  $("run-history-prev").disabled = runHistoryPage <= 1;
+  $("run-history-next").disabled = runHistoryPage >= pageCount;
+  $("run-history-list").innerHTML = visibleRuns.map(run => { const completed = `${number(run.completedSessions)} / ${number(run.sessionCount)}`; return `<button type="button" class="run-history-row${select.value === run.id ? " selected" : ""}" data-run-id="${escapeHtml(run.id)}"><span class="run-history-state ${escapeHtml(run.status)}">${escapeHtml(run.status.toUpperCase())}</span><span><b>${escapeHtml(run.id)}</b><small>${escapeHtml(runKindLabel(run.kind))} · ${escapeHtml(new Date(run.createdAt).toLocaleString())}</small></span><span class="run-targets">${(run.targets || []).map(target => `<i class="run-target-chip" title="${escapeHtml(runTargetLabel(target))}">${providerMark(target)}<span>${escapeHtml(({ aws: "AWS", adb: "ADB", ndcs: "NoSQL" })[target] || target.toUpperCase())}</span></i>`).join("")}</span><span><b>${escapeHtml(completed)}</b><small>sessions</small></span><span><b>${escapeHtml(elapsedLabel(run))}</b><small>elapsed</small></span></button>`; }).join("") || '<p class="run-history-empty">No executions match this filter.</p>';
   for (const button of document.querySelectorAll("[data-run-id]")) button.addEventListener("click", () => { select.value = button.dataset.runId; void showHistoricalRun(button.dataset.runId); renderRunHistoryList(); });
+}
+function changeRunHistoryPage(delta) {
+  const runs = filteredRunHistory(), pageCount = Math.max(1, Math.ceil(runs.length / runHistoryPageSize));
+  runHistoryPage = Math.min(Math.max(1, runHistoryPage + delta), pageCount);
+  const selected = runs[(runHistoryPage - 1) * runHistoryPageSize];
+  if (selected) $("run-history-select").value = selected.id;
+  renderRunHistoryList({ preserveSelection: true });
+  if (selected) void showHistoricalRun(selected.id);
 }
 async function showHistoricalRun(id) {
   const detail = $("run-history-detail");
@@ -346,10 +366,29 @@ async function refreshRunHistory({ preserveSelection = true, quiet = false } = {
       const candidates = [legacy.active, legacy.latest].filter(Boolean), unique = [...new Map(candidates.map(run => [run.id, run])).values()];
       payload = { items: unique.map(run => ({ id: run.id, kind: run.kind, mode: run.mode, status: run.status, createdAt: run.createdAt, startedAt: run.startedAt, completedAt: run.completedAt, targets: Object.keys(run.targetStatus || {}), sessionCount: run.matrix?.length || (run.summary ? 1 : 0), completedSessions: run.sessionResults?.length || (run.summary ? 1 : 0), workloadNames: [...new Set((run.matrix || []).map(item => item.name || item.configName).filter(Boolean))], currentSession: run.currentSession, error: run.error, downloadUrl: run.downloadUrl })) };
     } else if (!response.ok) throw new Error(payload.error || `Run history failed (${response.status})`);
-    runHistory = payload.items || []; runHistoryRefreshAt = Date.now(); renderRunHistoryList({ preserveSelection });
+    runHistory = payload.items || []; renderRunHistoryList({ preserveSelection });
+    if (payload.activeRunId) await syncServerActiveRun(payload.activeRunId);
     if ($("run-history-select").value) await showHistoricalRun($("run-history-select").value);
   } catch (error) { if (!quiet) $("run-history-list").innerHTML = `<div class="historical-error">${escapeHtml(error.message)}</div>`; }
   finally { runHistoryPending = false; }
+}
+
+async function syncServerActiveRun(activeRunId = null) {
+  try {
+    let activeRun;
+    if (activeRunId) {
+      const response = await fetch(`/api/runs/${encodeURIComponent(activeRunId)}`, { cache: "no-store" }); activeRun = await response.json();
+      if (!response.ok) throw new Error(activeRun.error || `Active run lookup failed (${response.status})`);
+    } else {
+      const response = await fetch("/api/runs/active", { cache: "no-store" }), payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || `Active run lookup failed (${response.status})`);
+      activeRun = payload.active;
+    }
+    if (!activeRun || activeRun.id === terminalRunId) return;
+    localStorage.setItem("kvs-dashboard-run-id", activeRun.id);
+    if (wizardActive) showOperations();
+    showSmoke(activeRun); void monitorRun(activeRun.id, activeRun.mode || "async", true);
+  } catch { /* Background discovery must not disturb the operator's current view. */ }
 }
 
 function runMode() { return document.querySelector('input[name="run-mode"]:checked').value; }
@@ -653,7 +692,7 @@ function setRunLock(locked) {
   document.querySelector(".stepper").classList.toggle("run-locked", runLocked);
   $("new-benchmark").disabled = runLocked; $("new-benchmark").setAttribute("aria-disabled", String(runLocked));
   $("cancel-benchmark").disabled = runLocked;
-  if (runLocked) showOperations();
+  if (runLocked && wizardActive) showOperations();
 }
 
 function showStep(step) {
@@ -832,7 +871,6 @@ function showSmoke(run) {
   $("stop-run").classList.toggle("hidden", terminal || !run.canStop); $("stop-run").disabled = run.status === "stopping";
   $("resume-run").classList.toggle("hidden", !run.canResume); $("resume-run").disabled = !run.canResume;
   $("start-smoke").disabled = !terminal; $("start-benchmark").disabled = !terminal; if (terminal) localStorage.removeItem("kvs-dashboard-run-id");
-  if (Date.now() - runHistoryRefreshAt > 5000) void refreshRunHistory({ preserveSelection: true, quiet: true });
 }
 
 async function monitorRun(id, mode, restoring = false) {
@@ -907,7 +945,9 @@ $("preview-button").addEventListener("click", preview); $("download").addEventLi
 $("stop-run").addEventListener("click", stopRun);
 $("resume-run").addEventListener("click", resumeRun);
 $("refresh-run-history").addEventListener("click", () => refreshRunHistory({ preserveSelection: true }));
-$("run-history-status").addEventListener("change", () => { renderRunHistoryList({ preserveSelection: false }); if ($("run-history-select").value) void showHistoricalRun($("run-history-select").value); else $("run-history-detail").classList.add("hidden"); });
+$("run-history-status").addEventListener("change", () => { runHistoryPage = 1; renderRunHistoryList({ preserveSelection: false }); if ($("run-history-select").value) void showHistoricalRun($("run-history-select").value); else $("run-history-detail").classList.add("hidden"); });
 $("run-history-select").addEventListener("change", () => { renderRunHistoryList({ preserveSelection: true }); void showHistoricalRun($("run-history-select").value); });
+$("run-history-prev").addEventListener("click", () => changeRunHistoryPage(-1));
+$("run-history-next").addEventListener("click", () => changeRunHistoryPage(1));
 function showLoadError(error) { $("connection").textContent = error.message; $("connection").className = "status error"; }
 initializeWorkspaceShell(); syncDestinationProducts(); renderDestinationSummary(); syncLiveChartVisibility(); load().catch(showLoadError);
