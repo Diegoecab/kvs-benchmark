@@ -10,7 +10,7 @@ The harness defines its own versioned methodology for deterministic open-loop sc
 
 ## Status
 
-`v0.1` provides validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop and fixed-concurrency closed-loop execution, synchronized Phase 1 capacity transitions, concurrency/client-health telemetry, HTML evidence packaging, and offline tests. Cloud provisioning remains outside this repository.
+`v0.1` provides validated workload specifications, deterministic operation generation, AWS/ADB and OCI NoSQL adapters, open-loop and fixed-concurrency closed-loop execution, synchronized starts and Phase 1 capacity transitions, preload performance measurement, concurrency/client-health telemetry, live dashboard progress, HTML evidence packaging, and offline tests. Cloud provisioning remains outside this repository.
 
 The optional local control dashboard is documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md). It discovers local AWS/OCI profile names, builds a validated run matrix, exports a reviewable run specification, executes local functional tests, and remotely runs benchmarks on pre-existing regional AWS/OCI runners. Infrastructure provisioning remains outside this repository.
 
@@ -46,24 +46,54 @@ npm ci
 npm run dashboard
 ```
 
-On Windows PowerShell, use `npm.cmd` if the local execution policy blocks `npm.ps1`:
-
-```powershell
-npm.cmd ci
-npm.cmd run dashboard
-```
-
-Then open `http://127.0.0.1:4177` and follow the five-step wizard. The command is the same on Windows, macOS, and Linux; no `.cmd` or PowerShell script is required by the project.
+Then open `http://127.0.0.1:4177` and follow the five-step wizard. The dashboard and cloud controller run on Node.js on macOS, Linux, and Windows.
 
 1. Keep **Use existing infrastructure** selected; the separate `kvs-benchmark-infra` adapter is not enabled yet.
 2. Choose AWS and/or OCI, then select products, profiles, regions, regional runners, compartments, tables, and provider-native evidence buckets.
 3. Select workload profiles and optional overrides. Model-specific overrides are applied only where compatible.
-4. Select **Async** (default) or **Live**.
+4. Select **Async** (default) or **Live**. Live mode displays provisional throughput, completed and failed operations, in-flight requests, and rolling P95 latency by target during workload sessions.
 5. Review the immutable matrix and select either **Run local functional test** or **Run selected cloud benchmark**. Cloud execution supports any one, two, or all three enabled products.
 
 The local functional test is safe and does not contact AWS or OCI. It runs a two-second in-memory workload through the real scheduler, metrics, report, and packaging path. When it reaches `COMPLETE`, select **Download benchmark output (.zip)**. The ZIP contains the standalone HTML report, operation and telemetry evidence, final summary, effective configuration, and SHA-256 manifest. Evidence is also written under `.kvs/runs/<run-id>/`.
 
 For cloud execution against existing runners, install the AWS CLI and OCI CLI before starting the dashboard. AWS uses Systems Manager plus S3; OCI uses Compute Run Command plus Object Storage. No SSH client, SCP, private key, or public runner IP is required. Complete the [cloud execution prerequisites](docs/cloud-prerequisites.md), then follow the behavior documented in [docs/local-control-dashboard.md](docs/local-control-dashboard.md).
+
+## Cloud acceptance pipeline
+
+The cloud benchmark uses existing dedicated tables and runners. A run advances only after each gate succeeds:
+
+1. runner readiness and immutable image validation;
+2. existing resource, endpoint, schema, and capacity validation;
+3. canonical dataset preload;
+4. strong-read certification and identical dataset hash across targets;
+5. one shared UTC T0 for each workload session;
+6. evidence collection, operation accounting, acceptance validation, and package generation.
+
+The optional **Measure and compare preload performance** control schedules the canonical preload at one shared UTC T0. Configure the offered writes/s and maximum in-flight writes in step 4. Its evidence includes actual start and skew, elapsed time, requested/completed/failed writes, attempted and successful throughput, P50/P90/P95/P99/P99.9/max latency, attempts, retries, provider-reported write units, and operation-level NDJSON. A requested rate is an offered load, not an achieved-throughput result. Missing consumed-capacity data is reported as unavailable.
+
+Live values are provisional and intended for operational visibility. Accepted comparisons use the complete operation evidence and final summaries in the downloadable ZIP. Preload currently reports live stage status and publishes its performance comparison when the stage completes; workload sessions stream per-target metrics while they run.
+
+Use [the reusable cloud runbook](docs/cloud-dashboard-runbook.md) for the three-target topology, portable ADB API bootstrap, T0 guidance, and troubleshooting. Resource cleanup is not part of automatic acceptance: keep OCI tables unless an independently authorized operation says otherwise, and remove a temporary resource only after its final package has passed validation.
+
+## Embedded benchmark operator
+
+The repository includes the `kvs-benchmark-operator` skill for launching authorized runs, following an active run, summarizing preload/workload evidence, diagnosing failed gates, and reporting final package status through Codex. It consumes the same dashboard state and does not implement a separate benchmark path.
+
+Example requests:
+
+```text
+Use $kvs-benchmark-operator to show the live benchmark status.
+Use $kvs-benchmark-operator to summarize the latest completed run.
+```
+
+For a portable read-only snapshot from the repository root:
+
+```bash
+node .codex/skills/kvs-benchmark-operator/scripts/snapshot.mjs
+node .codex/skills/kvs-benchmark-operator/scripts/snapshot.mjs --run-id=<run-id>
+```
+
+The snapshot reports the active stage, targets, current session, shared T0, completed matrix sessions, final preload metrics, provisional workload metrics, last event, error state, and package readiness. See [the skill instructions](.codex/skills/kvs-benchmark-operator/SKILL.md).
 
 ## Reproducibility contract
 
