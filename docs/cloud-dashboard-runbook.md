@@ -6,7 +6,7 @@ This runbook prepares the existing-infrastructure dashboard path for AWS DynamoD
 
 - AWS DynamoDB and its runner use `us-east-1`; place the runner in the same Availability Zone used by the prior benchmark (`us-east-1a`).
 - Select an OCI CLI profile and region that can access both reviewed OCI targets; the profile name is environment-specific and must never be hardcoded.
-- Autonomous Database must be `AVAILABLE`, use `BRING_YOUR_OWN_LICENSE`, have 2 ECPU, and have base compute autoscaling disabled.
+- Autonomous Database must be `AVAILABLE`, use `BRING_YOUR_OWN_LICENSE`, and have fixed compute with base autoscaling disabled. Size ECPU independently for the highest offered-rate step; table RCU/WCU alone does not prove that the ADB data-access endpoint can sustain that request rate.
 - The dedicated ADB API table uses 500 RCU / 500 WCU. The dedicated OCI NoSQL table uses 1,000 RU / 1,000 WU. The temporary AWS table uses 500 RCU / 500 WCU.
 - Keep all OCI tables after the run. Delete the temporary AWS table only after the final package and acceptance validation pass.
 
@@ -45,4 +45,5 @@ The dashboard preflight now downloads its pinned image digest when it is missing
 - `CredentialsProviderError` with a valid runtime usually means `sudo` stripped inherited variables. Use the protected `adb-api.runtime.env`; do not pass credentials as inherited `-e NAME` values.
 - `ENOENT configs/dallas-1000-*.json` means the pinned runner image predates the workload profiles. Use the dashboard default digest or publish and select a newer immutable digest.
 - `ACCEPTED` for several minutes is a control-plane delivery delay, not a NoSQL capacity failure. Keep the 900-second delivery/T0 defaults and inspect command execution before retrying.
+- HTTP `429` or `504` responses from the ADB DynamoDB-compatible endpoint, SDK deserialization errors caused by an HTML gateway body, or growing request timeouts indicate endpoint saturation even when the mapped table still reports sufficient RCU/WCU. Stop a doomed matrix after preserving the completed session, inspect failures by offered-rate step, resize fixed ADB compute only with explicit cost authorization, and pass a short peak-rate rehearsal before restarting the complete matrix. In one observed 900-byte strong-read rehearsal, a 2-ECPU database began returning errors at 300 operations/s; treat that as an environment observation, not a universal sizing ratio.
 - `EACCES` during encrypted bootstrap requires both SELinux relabel `:Z` and `--user 0:0` on the two ephemeral bootstrap containers. Normal workload containers retain their normal user.
