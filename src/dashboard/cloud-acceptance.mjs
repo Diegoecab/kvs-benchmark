@@ -11,7 +11,7 @@ import { readRunStates, stateFileName, writeStateAtomic } from "./file-state.mjs
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const configDirectory = path.join(repositoryRoot, "configs");
 const defaultOutput = path.join(repositoryRoot, ".kvs", "cloud-runs");
-const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:55ce8eeccce8e8e698ec7b672e491d0e99c28813a2d8ad93ef44ae85330131e0";
+const defaultImage = "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:9b240a19a1b518004bbf5b07b5980363bb80d86b383b9d59df975100fc6d23e4";
 const stages = ["runner-readiness", "resource-validation", "dataset-preload", "dataset-certification", "dataset-hash-match", "t0-scheduled", "workload", "evidence-collection", "acceptance-validation", "package-generation"];
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const safe = (value, pattern, label) => { if (!pattern.test(value || "")) throw new Error(`${label} is invalid`); return value; };
@@ -37,7 +37,7 @@ function validate(input) {
   };
   const requestedLead = input.execution?.t0LeadSeconds;
   if (requestedLead != null && (!Number.isInteger(Number(requestedLead)) || Number(requestedLead) < 30 || Number(requestedLead) > 3600)) throw new Error("T0 lead time must be an integer between 30 and 3600 seconds");
-  result.t0LeadSeconds = requestedLead == null ? (enabled.some(name => name === "adb" || name === "ndcs") ? 480 : 120) : Number(requestedLead);
+  result.t0LeadSeconds = requestedLead == null ? (enabled.some(name => name === "adb" || name === "ndcs") ? 900 : 120) : Number(requestedLead);
   if (enabled.includes("aws")) Object.assign(result, { awsProfile: safe(target.aws.profile, /^[A-Za-z0-9_.-]+$/, "AWS profile"), awsRegion: safe(target.aws.region, /^[a-z]{2}-[a-z]+-\d$/, "AWS region"), awsTable: safe(target.aws.resource, /^[A-Za-z0-9_.-]+$/, "AWS table"), awsRunner: safe(target.aws.runnerId, /^i-[a-f0-9]+$/, "AWS runner"), bucket: safe(input.artifactBucket, /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, "Artifact bucket") });
   if (enabled.includes("adb")) Object.assign(result, { adbOciProfile: safe(target.adb.profile, /^[A-Za-z0-9_.-]+$/, "ADB OCI profile"), adbOciRegion: safe(target.adb.region, /^[a-z]{2}-[a-z]+-\d$/, "ADB OCI region"), adbTable: safe(target.adb.resource, /^[A-Za-z0-9_.-]+$/, "ADB table"), adbRunner: safe(target.adb.runnerId, /^ocid1\.instance\./, "ADB runner"), adbRunnerCompartment: safe(target.adb.runnerCompartmentId, /^ocid1\.(compartment|tenancy)\./, "ADB runner compartment"), adbBucket: safe(target.adb.evidenceBucket, /^[A-Za-z0-9_.-]+$/, "ADB evidence bucket"), adbDatabaseId: target.adb.databaseId ? safe(target.adb.databaseId, /^ocid1\.autonomousdatabase\./, "Autonomous Database") : null });
   if (enabled.includes("ndcs")) {
@@ -78,7 +78,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
   const env = target === "adb"
     ? `envargs=(--env-file /opt/kvs-dashboard/adb-api.runtime.env -e AWS_REGION=${spec.adbOciRegion})`
     : `envargs=(-e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION=${spec.ndcsOciRegion} -e OCI_COMPARTMENT_ID=${spec.ndcsCompartment})`;
-  if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nif ! sudo -n podman --version >/dev/null 2>&1; then echo "Runner prerequisite failed: the ocarun user requires passwordless access to Podman for the benchmark commands. Apply the documented sudoers policy or replace this runner." >&2; exit 20; fi\nsudo -n podman image exists ${shellQuote(spec.image)}\n`;
+  if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nif ! sudo -n podman --version >/dev/null 2>&1; then echo "Runner prerequisite failed: the ocarun user requires passwordless access to Podman for the benchmark commands. Apply the documented sudoers policy or replace this runner." >&2; exit 20; fi\nif ! sudo -n podman image exists ${shellQuote(spec.image)}; then sudo -n podman pull ${shellQuote(spec.image)} >/dev/null; fi\nsudo -n podman image exists ${shellQuote(spec.image)}\n`;
   const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : `${action} --rate=20 --max-inflight=16`;
   const outputArgument = action === "doctor" ? "results/doctor.json" : "results";
   const invocation = `sudo podman run --rm --network host "${'${envargs[@]}'}" -v "$root:/app/results:z" "$image" ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=${target} --table=${shellQuote(table)} --output=${outputArgument}`;
@@ -91,6 +91,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
 }
 
 function awsCommands(spec, action, output, startAt, session = spec.matrix[0]) {
+  if (action === "preflight") return ["set -eu", "podman --version", `if ! podman image exists ${spec.image}; then podman pull ${spec.image} >/dev/null; fi`, `podman image exists ${spec.image}`];
   const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt}` : `${action} --rate=20 --max-inflight=16`;
   const prefix = `results/${spec.runId}/${action}/aws`;
   const invocation = `podman run --rm --network host -e AWS_REGION=${spec.awsRegion} -v $root:/app/results:Z $image ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=aws --table=${spec.awsTable} --output=results`;
@@ -115,11 +116,11 @@ export class CliCloudAdapter {
     const control = path.join(spec.localOutput, "control"); fs.mkdirSync(control, { recursive: true });
     const safeAction = action.replaceAll("/", "-"), script = remoteScript(spec, target, action, output, startAt, session);
     const instanceId = target === "adb" ? spec.adbRunner : spec.ndcsRunner, compartmentId = target === "adb" ? spec.adbRunnerCompartment : spec.ndcsRunnerCompartment, profile = target === "adb" ? spec.adbOciProfile : spec.ndcsOciProfile, region = target === "adb" ? spec.adbOciRegion : spec.ndcsOciRegion;
-    return executeOciRunCommand({ executeCommand: this.execute, profile, region, compartmentId, instanceId, script, displayName: `${spec.runId}-${target}-${safeAction}`, controlDirectory: control, timeoutSeconds: action === "preflight" ? 60 : 3600, deliveryTimeoutSeconds: 360 });
+    return executeOciRunCommand({ executeCommand: this.execute, profile, region, compartmentId, instanceId, script, displayName: `${spec.runId}-${target}-${safeAction}`, controlDirectory: control, timeoutSeconds: action === "preflight" ? 60 : 3600, deliveryTimeoutSeconds: 900 });
   }
   async preflight(spec) {
     const tasks = {};
-    if (spec.enabled.includes("aws")) tasks.aws = this.execute("aws", ["ssm", "describe-instance-information", "--profile", spec.awsProfile, "--region", spec.awsRegion, "--filters", `Key=InstanceIds,Values=${spec.awsRunner}`, "--output", "json"]).then(raw => JSON.parse(raw).InstanceInformationList?.[0]?.PingStatus);
+    if (spec.enabled.includes("aws")) tasks.aws = this.aws(spec, "preflight", `/opt/kvs-dashboard/${spec.runId}/preflight/aws`, null).then(() => "Online");
     for (const target of ["adb", "ndcs"].filter(name => spec.enabled.includes(name))) tasks[target] = this.oci(spec, target, "preflight", `/opt/kvs-dashboard/${spec.runId}/preflight/${target}`, null).then(value => value.stdout.trim());
     const entries = await Promise.all(Object.entries(tasks).map(async ([key, task]) => [key, await task])); return Object.fromEntries(entries);
   }

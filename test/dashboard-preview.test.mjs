@@ -6,8 +6,8 @@ import { listBenchmarkConfigs, previewMatrix } from "../src/dashboard/preview.mj
 const configDirectory = fileURLToPath(new URL("../configs/", import.meta.url));
 const targets = {
   aws: { enabled: true, profile: "dynamodb_poc", region: "us-east-1", resource: "aws-table" },
-  adb: { enabled: true, profile: "PITWALL_API", region: "us-ashburn-1", resource: "adb-ocid/table" },
-  ndcs: { enabled: true, profile: "PITWALL_API", region: "us-ashburn-1", resource: "nosql-table" },
+  adb: { enabled: true, profile: "OCI_BENCHMARK", region: "us-ashburn-1", resource: "adb-ocid/table" },
+  ndcs: { enabled: true, profile: "OCI_BENCHMARK", region: "us-ashburn-1", resource: "nosql-table" },
 };
 
 test("dashboard lists only valid benchmark workload configurations", () => {

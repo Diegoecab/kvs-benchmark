@@ -48,7 +48,7 @@ export async function listAdbApiTables({ runnerId, runnerCompartmentId, profile,
   const envFile = runtimeFile.replace(/\.json$/, ".env");
   const script = `#!/usr/bin/env bash\nset -euo pipefail\nenvfile='${envFile.replaceAll("'", "")}'\nif ! sudo -n podman --version >/dev/null 2>&1; then echo "Runner incompatible: the ocarun identity lacks passwordless sudo for Podman and protected runtime access. Replace or repair this runner before ADB table discovery." >&2; exit 20; fi\nsudo -n podman run --rm --network host --env-file "$envfile" --entrypoint node -e AWS_REGION=${region} '${image}' --input-type=module --eval '${javascript}'\n`;
   try {
-    const result = await executeOciRunCommand({ executeCommand, profile, region, compartmentId: runnerCompartmentId, instanceId: runnerId, script, displayName: `kvs-list-adb-${crypto.randomBytes(4).toString("hex")}`, controlDirectory: folder, timeoutSeconds: 30, deliveryTimeoutSeconds: 300, cliTimeoutMs: 60_000 });
+    const result = await executeOciRunCommand({ executeCommand, profile, region, compartmentId: runnerCompartmentId, instanceId: runnerId, script, displayName: `kvs-list-adb-${crypto.randomBytes(4).toString("hex")}`, controlDirectory: folder, timeoutSeconds: 30, deliveryTimeoutSeconds: 900, cliTimeoutMs: 60_000 });
     const jsonLine = result.stdout.split(/\r?\n/).reverse().find(line => line.trim().startsWith("{"));
     if (!jsonLine) throw new Error("ADB table lookup returned no JSON output");
     return parse(jsonLine);

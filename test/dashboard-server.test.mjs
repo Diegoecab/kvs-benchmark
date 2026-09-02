@@ -8,14 +8,14 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   const localSmokeRuns = { start: options => { assert.equal(options.mode, "async"); return smoke; }, get: id => { if (id !== smoke.id) throw new Error("not local"); return smoke; } };
   let activeCloud = null;
   const cloudRuns = { start: options => { assert.equal(options.writeAuthorization, true); activeCloud = cloud; return cloud; }, get: id => { assert.equal(id, cloud.id); return cloud; }, active: () => activeCloud, latest: () => cloud };
-  const runnerDiscovery = async options => { assert.equal(options.awsProfile, "dynamodb_poc"); return { aws: [], oci: [], artifactBuckets: [] }; };
+  const runnerDiscovery = async options => { assert.equal(options.awsProfile, "aws-benchmark"); return { aws: [], oci: [], artifactBuckets: [] }; };
   const destinationDiscovery = async options => { assert.deepEqual(options, {}); return { awsTables: ["table"], compartments: [] }; };
-  const { server, token } = createDashboardServer({ profileDiscovery: async () => ({ aws: ["dynamodb_poc"], oci: ["PITWALL_API"], warnings: [], sources: {} }), runnerDiscovery, destinationDiscovery, localSmokeRuns, cloudRuns, defaultOciRegion: "us-dallas-1" });
+  const { server, token } = createDashboardServer({ profileDiscovery: async () => ({ aws: ["aws-benchmark"], oci: ["OCI_BENCHMARK"], warnings: [], sources: {} }), runnerDiscovery, destinationDiscovery, localSmokeRuns, cloudRuns, defaultOciRegion: "us-dallas-1" });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   t.after(() => new Promise(resolve => server.close(resolve)));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const bootstrap = await fetch(`${origin}/api/bootstrap`).then(response => response.json());
-  assert.deepEqual(bootstrap.profiles.aws, ["dynamodb_poc"]);
+  assert.deepEqual(bootstrap.profiles.aws, ["aws-benchmark"]);
   assert.equal(bootstrap.capabilities.localMockExecution, true);
   assert.equal(bootstrap.capabilities.cloudExecution, true);
   assert.equal(bootstrap.capabilities.ociRunCommand, true);
@@ -32,7 +32,7 @@ test("dashboard serves bootstrap and protects preview with its launch token", as
   assert.equal((await startedSmoke.json()).id, smoke.id);
   const smokeStatus = await fetch(`${origin}/api/runs/${smoke.id}`).then(response => response.json());
   assert.equal(smokeStatus.summary.harnessPassed, true);
-  const discovered = await fetch(`${origin}/api/discover-runners`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ awsProfile: "dynamodb_poc" }) });
+  const discovered = await fetch(`${origin}/api/discover-runners`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ awsProfile: "aws-benchmark" }) });
   assert.equal(discovered.status, 200);
   const destinations = await fetch(`${origin}/api/discover-destinations`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: "{}" }); assert.equal(destinations.status, 200); assert.deepEqual((await destinations.json()).awsTables, ["table"]);
   const startedCloud = await fetch(`${origin}/api/cloud-acceptance`, { method: "POST", headers: { "content-type": "application/json", "x-kvs-csrf": token }, body: JSON.stringify({ writeAuthorization: true }) });

@@ -94,7 +94,7 @@ async function load() {
   if (!response.ok) throw new Error(`Bootstrap failed (${response.status})`);
   bootstrap = await response.json();
   const draft = readDraft();
-  profiles($("aws-profile"), bootstrap.profiles.aws, draft?.fields?.["aws-profile"] || "dynamodb_poc"); profiles($("adb-profile"), bootstrap.profiles.oci, draft?.fields?.["adb-profile"] || "PITWALL_API"); profiles($("ndcs-profile"), bootstrap.profiles.oci, draft?.fields?.["ndcs-profile"] || "PITWALL_API");
+  profiles($("aws-profile"), bootstrap.profiles.aws, draft?.fields?.["aws-profile"] || "default"); profiles($("adb-profile"), bootstrap.profiles.oci, draft?.fields?.["adb-profile"] || "DEFAULT"); profiles($("ndcs-profile"), bootstrap.profiles.oci, draft?.fields?.["ndcs-profile"] || "DEFAULT");
   $("image-digest").value = bootstrap.defaults.imageDigest || ""; renderRunnerImage();
   $("adb-table-manual").value = localStorage.getItem("kvs-dashboard-adb-table") || "";
   renderConfigs(bootstrap.configs); syncOverrideApplicability();

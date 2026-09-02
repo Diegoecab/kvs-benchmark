@@ -111,7 +111,9 @@ Phase 1 additionally requires permission to alter the provisioned limits of that
 
 The ADB runner needs the same Run Command and evidence-bucket policies. DynamoDB-API credentials and endpoint remain on the runner in its protected runtime configuration; they are never returned to the dashboard. The credentials must permit `ListTables`, `DescribeTable`, `GetItem`, and the idempotent write operation used by preload/mixed workloads. Phase 1 also needs `UpdateTable` on the dedicated table.
 
-The stable protected runtime path is `/opt/kvs-dashboard/adb-api.runtime.json`. It is created only during the separately approved ADB secret bootstrap, owned by `root`, readable through the runner's restricted passwordless `jq` command, and must never be embedded in cloud-init, Terraform state, dashboard input, or evidence.
+The stable protected runtime files are `/opt/kvs-dashboard/adb-api.runtime.json` and `/opt/kvs-dashboard/adb-api.runtime.env`. They are created only during the separately approved encrypted ADB secret bootstrap and remain owned by `root` with mode `0600`. Podman consumes the env file directly as root so `sudo` cannot strip the ADB variables. Neither file may be embedded in cloud-init, Terraform state, dashboard input, Run Command plaintext, or evidence.
+
+Use `scripts/bootstrap-adb-runner-runtime.mjs` to install them. The runner generates an ephemeral RSA private key locally; only its public key leaves the VM. Access-key values are sent back as RSA-OAEP ciphertext, the runtime files are written inside the rootful container mount, and the ephemeral private key is deleted after installation.
 
 ## AWS runner
 

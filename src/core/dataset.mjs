@@ -53,19 +53,26 @@ export async function preloadDataset({ config, configSha256, provider, target, t
   return summary;
 }
 
-export async function certifyDataset({ config, configSha256, provider, target, table, output, rate = 25, maxInflight = 64 }) {
+export async function certifyDataset({ config, configSha256, provider, target, table, output, rate = 25, maxInflight = 64, maxReadAttempts = 3, retryDelayMs = 250 }) {
   fs.mkdirSync(output, { recursive: true });
   const expectedSha256 = expectedDatasetSha256(config); const startedAt = new Date().toISOString();
   const results = await rateLimitedMap({ count: config.dataset.keyCount, rate, maxInflight, operation: async index => {
-    const started = performance.now();
-    try { const result = await provider.read(canonicalKey(index, config.dataset.partitionBuckets)); return { index, record: { ...result.key, version: result.version, payload: result.payload }, latencyMs: fixed(performance.now() - started), readUnits: result.readUnits || 0, error: null }; }
-    catch (error) { return { index, record: null, latencyMs: fixed(performance.now() - started), readUnits: 0, error: errorEvidence(error) }; }
+    const started = performance.now(); const transientErrors = [];
+    for (let attempt = 1; attempt <= maxReadAttempts; attempt += 1) {
+      try { const result = await provider.read(canonicalKey(index, config.dataset.partitionBuckets)); return { index, record: { ...result.key, version: result.version, payload: result.payload }, latencyMs: fixed(performance.now() - started), readUnits: result.readUnits || 0, attempts: attempt, transientErrors, error: null }; }
+      catch (error) {
+        const evidence = errorEvidence(error);
+        if (error?.name === "CorrectnessMismatch" || attempt === maxReadAttempts) return { index, record: null, latencyMs: fixed(performance.now() - started), readUnits: 0, attempts: attempt, transientErrors, error: evidence };
+        transientErrors.push({ attempt, error: evidence });
+        await sleep(retryDelayMs * attempt);
+      }
+    }
   }});
   const observedHash = crypto.createHash("sha256");
   for (const result of results) observedHash.update(result.record ? canonicalLine(result.record) : `${result.index}:READ_ERROR\n`);
   const observedSha256 = observedHash.digest("hex"); const mismatches = results.filter(result => result.error);
-  fs.writeFileSync(path.join(output, "audit-operations.ndjson"), `${results.map(result => JSON.stringify({ index: result.index, pk: result.record?.pk ?? null, sk: result.record?.sk ?? null, version: result.record?.version ?? null, latencyMs: result.latencyMs, readUnits: result.readUnits, error: result.error })).join("\n")}\n`);
-  const certificate = { schemaVersion: 1, target, table, configName: config.name, configSha256, consistency: "strong", startedAt, endedAt: new Date().toISOString(), keyCount: config.dataset.keyCount, payloadBytes: config.dataset.payloadBytes, partitionBuckets: config.dataset.partitionBuckets, expectedSha256, observedSha256, mismatchCount: mismatches.length, passed: mismatches.length === 0 && observedSha256 === expectedSha256, rate, maxInflight, latencyMs: distribution(results.filter(x => !x.error).map(x => x.latencyMs)), readUnits: fixed(results.reduce((sum, x) => sum + x.readUnits, 0)), mismatches: mismatches.slice(0, 100).map(x => ({ index: x.index, error: x.error })) };
+  fs.writeFileSync(path.join(output, "audit-operations.ndjson"), `${results.map(result => JSON.stringify({ index: result.index, pk: result.record?.pk ?? null, sk: result.record?.sk ?? null, version: result.record?.version ?? null, latencyMs: result.latencyMs, readUnits: result.readUnits, attempts: result.attempts, transientErrors: result.transientErrors, error: result.error })).join("\n")}\n`);
+  const certificate = { schemaVersion: 1, target, table, configName: config.name, configSha256, consistency: "strong", startedAt, endedAt: new Date().toISOString(), keyCount: config.dataset.keyCount, payloadBytes: config.dataset.payloadBytes, partitionBuckets: config.dataset.partitionBuckets, expectedSha256, observedSha256, mismatchCount: mismatches.length, passed: mismatches.length === 0 && observedSha256 === expectedSha256, rate, maxInflight, maxReadAttempts, retryCount: results.reduce((sum, x) => sum + Math.max(0, x.attempts - 1), 0), latencyMs: distribution(results.filter(x => !x.error).map(x => x.latencyMs)), readUnits: fixed(results.reduce((sum, x) => sum + x.readUnits, 0)), mismatches: mismatches.slice(0, 100).map(x => ({ index: x.index, error: x.error })) };
   fs.writeFileSync(path.join(output, "dataset-certificate.json"), `${JSON.stringify(certificate, null, 2)}\n`);
   return certificate;
 }
