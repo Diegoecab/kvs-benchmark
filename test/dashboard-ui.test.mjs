@@ -44,12 +44,14 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.ok((app.match(/if \(runLocked\) return;/g) || []).length >= 2);
   assert.match(app, /setAttribute\("aria-disabled", String\(runLocked\)\)/);
   assert.match(app, /suppressPreview/); assert.match(theme, /Compact terminal workspace/); assert.doesNotMatch(html, /window-controls/);
-  assert.match(app, /accounted \* 100 \/ metric\.scheduled/);
+  assert.match(app, /accountedTotal \* 100 \/ metric\.scheduled/);
   assert.match(app, /function renderExecutionLog/); assert.match(app, /class="pipeline-track"/); assert.match(app, /aria-valuenow/); assert.match(app, /run-light/);
   assert.match(pipeline, /transform:scaleX\(var\(--pipeline-progress,0\)\)/);
   assert.match(pipeline, /\.kvs-run-log-line\{[^}]*background:transparent!important/);
   assert.match(html, /id="draft-status"/); assert.match(html, /id="reset-draft"/); assert.match(app, /kvs-dashboard-draft-v1/); assert.match(app, /function saveDraft/); assert.match(app, /async function restoreDraft/);
   assert.match(app, /function syncLiveChartVisibility/);
+  assert.match(app, /function observedLiveRate/);
+  assert.match(app, /Current throughput/);
   assert.match(app, /Waiting for the workload stage and the first runner sample/);
   assert.match(html, /canonical dataset preload and certification/);
   assert.match(app, /function renderRunnerImage/);

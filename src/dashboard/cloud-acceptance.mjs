@@ -81,8 +81,33 @@ function runtimeArguments(spec, session, { workload = true } = {}) {
   return Object.entries(names).filter(([name]) => values[name] != null && !ignored.has(name) && (workload || datasetOptions.has(name))).map(([name, option]) => `--${option}=${shellQuote(values[name])}`).join(" ");
 }
 
-function liveMonitor(root, scheduled, upload = "") {
+function legacyLiveMonitor(root, scheduled, upload = "") {
   return `started=$(date +%s)\nwrite_progress(){\n  operations="$root/operations.ndjson"\n  telemetry="$root/telemetry.ndjson"\n  completed=0; failed=0; latest=null; inflight=0; p95=null\n  if [ -s "$operations" ]; then\n    set -- $(awk '/^\\{.*\\}$/ { total++; if ($0 ~ /\"error\":null/) completed++ } END { print completed+0, total+0 }' "$operations")\n    completed=$1; total=$2; failed=$((total-completed))\n    latest=$(tail -n 1 "$operations" | jq -r '.serviceLatencyMs // 0')\n    p95=$(tail -n 1000 "$operations" | jq -s '[.[]|select(.error==null)|.serviceLatencyMs]|sort|if length==0 then null else .[((length-1)*0.95|floor)] end')\n  fi\n  if [ -s "$telemetry" ]; then inflight=$(tail -n 1 "$telemetry" | jq -r '.inFlight // 0'); fi\n  now=$(date +%s); elapsed=$((now-started)); if [ "$elapsed" -lt 1 ]; then elapsed=1; fi\n  jq -n --arg at "$(date -u +%FT%TZ)" --argjson scheduled ${Number(scheduled || 0)} --argjson completed "$completed" --argjson failed "$failed" --argjson inflight "$inflight" --argjson latest "$latest" --argjson p95 "$p95" --argjson elapsed "$elapsed" '{at:$at,scheduled:$scheduled,completed:$completed,failed:$failed,inFlight:$inflight,latestLatencyMs:$latest,rollingP95Ms:$p95,achievedOperationsPerSecond:(($completed+$failed)/$elapsed)}' > "$root/progress.json.tmp"\n  mv "$root/progress.json.tmp" "$root/progress.json"\n  ${upload}\n}\n`;
+}
+
+function liveMonitor(root, scheduled, upload = "") {
+  return `previous_total=0
+previous_at=$(date +%s)
+write_progress(){
+  operations="$root/operations.ndjson"
+  telemetry="$root/telemetry.ndjson"
+  completed=0; total=0; failed=0; latest=null; inflight=0; p95=null
+  if [ -s "$operations" ]; then
+    set -- $(awk '/^\\{.*\\}$/ { total++; if ($0 ~ /\"error\":null/) completed++ } END { print completed+0, total+0 }' "$operations")
+    completed=$1; total=$2; failed=$((total-completed))
+    latest=$(tail -n 1 "$operations" | jq -r '.serviceLatencyMs // 0')
+    p95=$(tail -n 1000 "$operations" | jq -s '[.[]|select(.error==null)|.serviceLatencyMs]|sort|if length==0 then null else .[((length-1)*0.95|floor)] end')
+  fi
+  if [ -s "$telemetry" ]; then inflight=$(tail -n 1 "$telemetry" | jq -r '.inFlight // 0'); fi
+  now=$(date +%s); elapsed=$((now-previous_at)); if [ "$elapsed" -lt 1 ]; then elapsed=1; fi
+  delta=$((total-previous_total)); if [ "$delta" -lt 0 ]; then delta=0; fi
+  if [ "$total" -eq 0 ]; then rate=0; else rate=$(awk -v delta="$delta" -v elapsed="$elapsed" 'BEGIN { printf "%.6f", delta/elapsed }'); fi
+  previous_total=$total; previous_at=$now
+  jq -n --arg at "$(date -u +%FT%TZ)" --argjson scheduled ${Number(scheduled || 0)} --argjson completed "$completed" --argjson failed "$failed" --argjson inflight "$inflight" --argjson latest "$latest" --argjson p95 "$p95" --argjson rate "$rate" '{at:$at,scheduled:$scheduled,completed:$completed,failed:$failed,inFlight:$inflight,latestLatencyMs:$latest,rollingP95Ms:$p95,achievedOperationsPerSecond:$rate}' > "$root/progress.json.tmp"
+  mv "$root/progress.json.tmp" "$root/progress.json"
+  ${upload}
+}
+`;
 }
 
 function remoteScript(spec, target, action, output, startAt, session = spec.matrix[0]) {

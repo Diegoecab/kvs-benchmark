@@ -416,6 +416,13 @@ function offeredAt(run, at) {
   for (const step of schedule) { if (elapsed < Number(step.seconds)) return Number(step.operationsPerSecond); elapsed -= Number(step.seconds); }
   return Number(schedule.at(-1)?.operationsPerSecond);
 }
+function accounted(metric) { return Number(metric?.completed || 0) + Number(metric?.failed || 0); }
+function observedLiveRate(target, metric, run) {
+  const prior = [...liveChartSamples].reverse().find(sample => sample[target]?.at && sample[target].at !== metric?.at)?.[target];
+  const fromAt = prior?.at || run.sharedStartAt, fromCount = prior ? accounted(prior) : 0;
+  const seconds = (new Date(metric?.at).getTime() - new Date(fromAt).getTime()) / 1000;
+  return Number.isFinite(seconds) && seconds > 0 ? Math.max(0, (accounted(metric) - fromCount) / seconds) : 0;
+}
 function hydrateLiveSamples(run) {
   const sessionId = run.currentSession?.id; if (!sessionId || (liveChartSession === sessionId && liveChartSamples.length)) return;
   liveChartSession = sessionId; const samples = new Map();
@@ -427,6 +434,15 @@ function hydrateLiveSamples(run) {
     sample[entry.target] = { completed: Number(match[1].replaceAll(",", "")), scheduled: Number(match[2].replaceAll(",", "")), operationsPerSecond: Number(match[3]), rollingP95Ms: match[4] === "-" ? null : Number(match[4]), failed: Number(match[5].replaceAll(",", "")) }; samples.set(at, sample);
   }
   liveChartSamples = [...samples.values()].sort((left, right) => left.at.localeCompare(right.at)).slice(-600);
+  for (const target of ["aws", "adb", "ndcs"]) {
+    let prior = null;
+    for (const sample of liveChartSamples) {
+      const metric = sample[target]; if (!metric) continue;
+      const fromAt = prior?.at || run.sharedStartAt, fromCount = prior ? accounted(prior) : 0, seconds = (new Date(metric.at || sample.at).getTime() - new Date(fromAt).getTime()) / 1000;
+      metric.operationsPerSecond = Number.isFinite(seconds) && seconds > 0 ? Math.max(0, (accounted(metric) - fromCount) / seconds) : 0;
+      metric.at ||= sample.at; prior = metric;
+    }
+  }
 }
 function renderLiveCharts() {
   const targets = ["aws", "adb", "ndcs"];
@@ -443,7 +459,8 @@ function captureLiveSample(run) {
   if (liveChartSession !== sessionId) { liveChartSession = sessionId; liveChartSamples = []; }
   const metrics = run.targetMetrics || {}, sampleAt = Object.values(metrics).map(item => item.at).filter(Boolean).sort().at(-1);
   if (!sampleAt || liveChartSamples.at(-1)?.at === sampleAt) return;
-  liveChartSamples.push({ at: sampleAt, offered: run.currentSession.offeredOperationsPerSecond, ...metrics });
+  const normalized = Object.fromEntries(Object.entries(metrics).map(([target, metric]) => [target, { ...metric, operationsPerSecond: metric.provisional ? observedLiveRate(target, metric, run) : metric.operationsPerSecond }]));
+  liveChartSamples.push({ at: sampleAt, offered: offeredAt(run, sampleAt), ...normalized });
   if (liveChartSamples.length > 600) liveChartSamples.shift();
   $("live-chart-caption").textContent = `${sessionId} | ${run.currentSession.durationSeconds} s | ${number(run.currentSession.offeredOperationsPerSecond)} offered ops/s | ${liveChartSamples.length} sample(s)`;
   renderLiveCharts();
@@ -489,7 +506,7 @@ function showSmoke(run) {
   const pipelineHeadline = failedStage ? `FAILED AT ${failedStage.name.replaceAll("-", " ").toUpperCase()}` : `${percentage}%`;
   $("pipeline").innerHTML = stages.length ? `<div class="pipeline-summary${failedStage ? " has-failure" : ""}"><div class="pipeline-progress-heading"><div><b>${escapeHtml(pipelineHeadline)}</b><span>${failedStage ? `${percentage}% of gates reached` : escapeHtml(progressLabel)}</span></div><small>${processed} of ${stages.length} gates finalized</small></div><div class="pipeline-track" role="progressbar" aria-label="Benchmark pipeline" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}"><span style="--pipeline-progress:${percentage / 100}"></span></div><ol class="pipeline-steps">${stages.map((stage, index) => { const symbol = stage.status === "complete" ? "✓" : stage.status === "failed" ? "!" : stage.status === "running" ? "●" : String(index + 1); return `<li class="${escapeHtml(stage.status)}" title="${escapeHtml(stage.detail || stage.status)}"><span>${symbol}</span><b>${escapeHtml(stage.name.replaceAll("-", " "))}</b></li>`; }).join("")}</ol></div>` : "";
   const showLiveChart = cloud && Boolean(session || Object.keys(targetMetrics).length); $("live-chart-panel").classList.toggle("hidden", !showLiveChart); if (showLiveChart) { hydrateLiveSamples(run); captureLiveSample(run); $("live-chart-caption").textContent = session ? `${session.id} · compare targets or hide series using the controls` : `Workload comparison · run ${run.status}`; renderLiveCharts(); }
-  if (cloud && Object.keys(targetMetrics).length) $("live-stats").innerHTML = Object.entries(targetMetrics).map(([target, metric]) => { const accounted = Number(metric.completed || 0) + Number(metric.failed || 0), percent = metric.scheduled ? accounted * 100 / metric.scheduled : 0, completion = metric.scheduled ? `${number(accounted)} / ${number(metric.scheduled)}` : number(accounted), provider = { aws: "AWS DynamoDB", adb: "ADB DynamoDB API", ndcs: "OCI NoSQL" }[target] || target.toUpperCase(), values = [["Accounted", completion], ["Failed", number(metric.failed)], ["Throughput", `${number(metric.operationsPerSecond)} ops/s`], ["In flight", number(metric.inFlight)], [metric.provisional ? "Rolling P95" : "Final P95", `${number(metric.rollingP95Ms ?? metric.p95)} ms`], ["Latest latency", `${number(metric.latestLatencyMs)} ms`]]; if (!metric.provisional) values.push(["Final P99", `${number(metric.p99)} ms`], ["Final max", `${number(metric.max)} ms`]); return `<section class="target-live provider-${escapeHtml(target)}"><div class="target-live-heading"><h4>${providerMark(target)}<span>${escapeHtml(provider)}</span></h4><span>${metric.provisional ? "LIVE PREVIEW" : "FINAL"}</span><b>${number(percent)}%</b></div><div class="pipeline-track" role="progressbar" aria-label="${escapeHtml(provider)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="--pipeline-progress:${percent / 100}"></span></div><div class="target-metrics">${values.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(item)}</b></div>`).join("")}</div></section>`; }).join("");
+  if (cloud && Object.keys(targetMetrics).length) $("live-stats").innerHTML = Object.entries(targetMetrics).map(([target, metric]) => { const accountedTotal = accounted(metric), percent = metric.scheduled ? accountedTotal * 100 / metric.scheduled : 0, completion = metric.scheduled ? `${number(accountedTotal)} / ${number(metric.scheduled)}` : number(accountedTotal), provider = { aws: "AWS DynamoDB", adb: "ADB DynamoDB API", ndcs: "OCI NoSQL" }[target] || target.toUpperCase(), liveRate = liveChartSamples.at(-1)?.[target]?.operationsPerSecond ?? metric.operationsPerSecond, values = [["Accounted", completion], ["Failed", number(metric.failed)], [metric.provisional ? "Current throughput" : "Average throughput", `${number(metric.provisional ? liveRate : metric.operationsPerSecond)} ops/s`], ["In flight", number(metric.inFlight)], [metric.provisional ? "Rolling P95" : "Final P95", `${number(metric.rollingP95Ms ?? metric.p95)} ms`], ["Latest latency", `${number(metric.latestLatencyMs)} ms`]]; if (!metric.provisional) values.push(["Final P99", `${number(metric.p99)} ms`], ["Final max", `${number(metric.max)} ms`]); return `<section class="target-live provider-${escapeHtml(target)}"><div class="target-live-heading"><h4>${providerMark(target)}<span>${escapeHtml(provider)}</span></h4><span>${metric.provisional ? "LIVE PREVIEW" : "FINAL"}</span><b>${number(percent)}%</b></div><div class="pipeline-track" role="progressbar" aria-label="${escapeHtml(provider)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="--pipeline-progress:${percent / 100}"></span></div><div class="target-metrics">${values.map(([label, item]) => `<div><span>${escapeHtml(label)}</span><b>${escapeHtml(item)}</b></div>`).join("")}</div></section>`; }).join("");
   else { const cloudCompleted = run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.completed, 0) : null; const values = [["Completed", cloudCompleted ?? progress.completed ?? 0], ["Failed", progress.failed ?? (run.summaries ? Object.values(run.summaries).reduce((sum, item) => sum + item.failed, 0) : 0)], ["Current ops/s", progress.achievedOperationsPerSecond ?? run.summary?.achievedOperationsPerSecond], ["In flight", progress.inFlight ?? 0], ["Latest latency ms", progress.latestLatencyMs], ["Final P95 ms", latency.p95]]; $("live-stats").innerHTML = values.map(([label, metric]) => `<div class="stat"><span>${escapeHtml(label)}</span><b>${number(metric)}</b></div>`).join(""); }
   renderExecutionLog(run);
   flagIncompatibleRunner(run);
