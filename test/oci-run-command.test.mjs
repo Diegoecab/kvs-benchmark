@@ -20,6 +20,22 @@ test("OCI Run Command uses typed JSON files and returns text output", async t =>
   assert.equal(content.source.sourceType, "TEXT"); assert.equal(content.output.outputType, "TEXT"); assert.equal(content.source.textSha256.length, 64);
 });
 
+test("OCI Run Command tolerates a transient status-poll failure", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-run-command-transient-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let polls = 0;
+  const executeCommand = async (_file, args) => {
+    if (args.includes("create")) return "ocid1.instanceagentcommand.test\n";
+    if (args.includes("command-execution")) {
+      polls += 1;
+      if (polls === 1) throw new Error("temporary control-plane network error");
+      return JSON.stringify({ data: { "lifecycle-state": "SUCCEEDED", content: { text: "done", "exit-code": 0 } } });
+    }
+    throw new Error(`Unexpected command: ${args.join(" ")}`);
+  };
+  const result = await executeOciRunCommand({ executeCommand, profile: "TEST", region: "us-ashburn-1", compartmentId: "ocid1.compartment.test", instanceId: "ocid1.instance.test", script: "date -u\n", displayName: "transient-poll", controlDirectory: root, timeoutSeconds: 5, pollIntervalMs: 1 });
+  assert.equal(result.stdout, "done"); assert.equal(polls, 2);
+});
+
 test("OCI Run Command honors the wall-clock timeout without extra polling attempts", async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-run-command-timeout-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const calls = [];

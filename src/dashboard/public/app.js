@@ -165,7 +165,7 @@ function renderRunOverview(run) {
   const stage = (run.stages || []).find(item => item.status === "running") || (run.stages || []).find(item => item.status === "failed") || (run.stages || []).at(-1);
   const targets = Object.keys(run.targetStatus || {}), inventory = run.resourceInventory || {};
   const cards = targets.map(target => {
-    const status = run.targetStatus[target], [label, description] = targetStatusView(status), resource = inventory[target] || {};
+    const reportedStatus = run.targetStatus[target], waitingForT0 = reportedStatus === "running" && run.sharedStartAt && Date.now() < Date.parse(run.sharedStartAt), status = waitingForT0 ? "scheduled" : reportedStatus, [label, description] = targetStatusView(status), resource = inventory[target] || {};
     const runner = resource.runnerInstanceId || resource.runnerInstanceOcid, table = resource.tableName || "Table pending validation";
     return `<article class="target-overview provider-${escapeHtml(target)}"><div class="target-overview-heading"><div>${providerMark(target)}<span><b>${escapeHtml(runTargetLabel(target))}</b><small>${escapeHtml(resource.region || "Region pending")}</small></span></div><span class="target-state ${escapeHtml(status || "pending")}">${escapeHtml(label)}</span></div><strong>${escapeHtml(description)}</strong><dl><div><dt>Table</dt><dd title="${escapeHtml(table)}">${escapeHtml(table)}</dd></div><div><dt>Runner</dt><dd title="${escapeHtml(runner || "Pending")}">${escapeHtml(compactResourceId(runner || "Pending"))}</dd></div></dl></article>`;
   }).join("");
@@ -194,7 +194,7 @@ function inventoryStageDetail(run) {
 }
 function sessionState(run, session) {
   if ((run.sessionResults || []).some(item => item.id === session.id)) return "complete";
-  if (run.currentSession?.id === session.id) return "running";
+  if (run.currentSession?.id === session.id) return run.sharedStartAt && Date.now() < Date.parse(run.sharedStartAt) ? "scheduled" : "running";
   if (["failed", "stopped"].includes(run.status)) return "not-run";
   return "pending";
 }

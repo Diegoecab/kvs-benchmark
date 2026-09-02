@@ -42,6 +42,7 @@ The dashboard preflight now downloads its pinned image digest when it is missing
 - A transient AWS or OCI status-poll failure is retried with backoff and retained in `control/command-journal.ndjson`; it is a control-plane visibility event, not evidence that the remote workload failed.
 - A nonzero workload command triggers final-evidence collection before any pipeline decision. Fully accounted service errors are recorded in the comparison and do not block the remaining sessions.
 - **Resume verified checkpoint** is available only after every immutable dataset gate passes. It reconciles the interrupted session, reuses finalized work, and assigns a new shared T0 only to the next unexecuted session.
+- The live OCI progress uploader is best-effort; final evidence reconnects with a fresh Object Storage client and retries. Package generation streams the evidence into the ZIP and validates every incremental SHA-256/CRC rather than buffering the complete matrix in memory.
 
 ## Troubleshooting learned from the reference run
 

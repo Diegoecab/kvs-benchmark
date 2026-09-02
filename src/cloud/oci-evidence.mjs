@@ -43,28 +43,37 @@ export async function uploadFile({ client, namespace, bucket, objectName, file }
 
 export async function syncEvidence({ directory, bucket, prefix, marker, intervalMs = 2000, createClient = createObjectStorageClient }) {
   if (!directory || !bucket || !prefix) throw new Error("directory, bucket, and prefix are required");
-  const { client, namespace } = await createClient();
   const progress = path.join(directory, "progress.json");
   let progressMtime = -1;
-  try {
-    if (marker) {
+  let connection = await createClient();
+  if (marker) {
+    try {
       while (!fs.existsSync(marker)) {
         if (fs.existsSync(progress)) {
           const mtime = fs.statSync(progress).mtimeMs;
           if (mtime !== progressMtime) {
-            await uploadFile({ client, namespace, bucket, objectName: `${prefix}/progress.json`, file: progress });
-            progressMtime = mtime;
+            try {
+              await uploadFile({ client: connection.client, namespace: connection.namespace, bucket, objectName: `${prefix}/progress.json`, file: progress });
+              progressMtime = mtime;
+            } catch {
+              // Live visibility is best-effort. Final evidence uses a fresh client below.
+            }
           }
         }
         await sleep(intervalMs);
       }
+    } finally {
+      connection.client.close();
     }
+    connection = await createClient();
+  }
+  try {
     for (const file of files(directory)) {
       const relative = path.relative(directory, file).replaceAll("\\", "/");
-      await uploadFile({ client, namespace, bucket, objectName: `${prefix}/${relative}`, file });
+      await uploadFile({ client: connection.client, namespace: connection.namespace, bucket, objectName: `${prefix}/${relative}`, file });
     }
   } finally {
-    client.close();
+    connection.client.close();
   }
 }
 

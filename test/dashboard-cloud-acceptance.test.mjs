@@ -38,6 +38,8 @@ test("cloud acceptance exposes every preflight, dataset, synchronization, eviden
   assert.equal(runs.list().length, 1); assert.equal(runs.list()[0].id, started.id); assert.equal(runs.list()[0].completedSessions, 1);
   assert.ok(current.logs.length >= 20); assert.ok(current.logs.some(item => item.stage === "runner-readiness" && item.level === "success")); assert.ok(current.logs.some(item => item.stage === "workload" && item.target === "aws")); assert.equal(current.logs.at(-1).message, "Benchmark pipeline completed");
   assert.ok(fs.existsSync(path.join(root, started.id, "pipeline-log.ndjson"))); assert.match(fs.readFileSync(path.join(root, started.id, "pipeline-log.ndjson"), "utf8"), /Benchmark pipeline completed/);
+  const packagedState = JSON.parse(fs.readFileSync(path.join(root, started.id, "run-state.json"), "utf8"));
+  assert.equal(packagedState.status, "complete"); assert.equal(packagedState.stages.find(stage => stage.name === "package-generation").status, "complete"); assert.equal(packagedState.logs.at(-1).message, "Benchmark pipeline completed");
   assert.ok(current.logs.some(item => item.stage === "t0-scheduled" && /900s delivery window/.test(item.message)));
   const restored = new CloudAcceptanceRuns({ outputRoot: root, adapter }); const recovered = restored.get(started.id); assert.equal(recovered.status, "complete"); assert.equal(recovered.sessionResults.length, 1); assert.ok(restored.download(started.id));
 });

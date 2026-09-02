@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createZip } from "./artifact.mjs";
+import { createZipFile, inspectFile } from "./artifact.mjs";
 import { previewMatrix } from "./preview.mjs";
 import { executeOciRunCommand } from "./oci-run-command.mjs";
 import { readRunStates, stateFileName, writeStateAtomic } from "./file-state.mjs";
@@ -162,7 +162,7 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
   const guardedInvocation = action === "doctor" ? `set +e\n${invocation}\ncode=$?\nset -e\nif [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then exit "$code"; fi` : isRun ? liveInvocation : invocation;
   const prefix = `results/${spec.runId}/${action}/${target}`;
   const sync = `sudo podman run --rm --network host -e OCI_REGION=${shellQuote(region)} -v "$root:/app/results:z" --entrypoint node "$image" src/cloud/oci-evidence.mjs --directory=/app/results --bucket=${shellQuote(bucket)} --prefix=${shellQuote(prefix)}`;
-  if (isRun) return `#!/usr/bin/env bash\nset -euo pipefail\n${env}\nroot=${shellQuote(output)}\nimage=${shellQuote(spec.image)}\nsudo mkdir -p "$root" && sudo chmod 0777 "$root"\nsudo podman image exists "$image"\nsudo chronyc tracking > "$root/clock.txt"\n${sync} --marker=/app/results/.benchmark-complete --interval-ms=2000 &\nuploader_pid=$!\nset +e\n(\n${guardedInvocation}\n)\ncode=$?\nset -e\ntouch "$root/.benchmark-complete"\nwait "$uploader_pid"\nexit "$code"\n`;
+  if (isRun) return `#!/usr/bin/env bash\nset -euo pipefail\n${env}\nroot=${shellQuote(output)}\nimage=${shellQuote(spec.image)}\nsudo mkdir -p "$root" && sudo chmod 0777 "$root"\nsudo podman image exists "$image"\nsudo chronyc tracking > "$root/clock.txt"\n${sync} --marker=/app/results/.benchmark-complete --interval-ms=2000 &\nuploader_pid=$!\nset +e\n(\n${guardedInvocation}\n)\ncode=$?\nset -e\ntouch "$root/.benchmark-complete"\nset +e\nwait "$uploader_pid"\nupload_code=$?\nset -e\nif [ "$upload_code" -ne 0 ]; then\n  for retry in 1 2 3; do\n    if ${sync}; then upload_code=0; break; fi\n    sleep $((retry * 5))\n  done\nfi\nif [ "$upload_code" -ne 0 ]; then exit "$upload_code"; fi\nexit "$code"\n`;
   return `#!/usr/bin/env bash\nset -euo pipefail\n${env}\nroot=${shellQuote(output)}\nimage=${shellQuote(spec.image)}\nsudo mkdir -p "$root" && sudo chmod 0777 "$root"\nsudo podman image exists "$image"\nsudo chronyc tracking > "$root/clock.txt"\n${guardedInvocation}\n${sync}\n`;
 }
 
@@ -284,7 +284,7 @@ export class CliCloudAdapter {
 
 function readJson(file) { return JSON.parse(fs.readFileSync(file, "utf8")); }
 function allFiles(directory) { return fs.readdirSync(directory, { recursive: true, withFileTypes: true }).filter(item => item.isFile()).map(item => path.join(item.parentPath || item.path, item.name)); }
-function packageRun(state) {
+async function packageRun(state) {
   const preloadRows = Object.entries(state.preloadSummaries || {}).map(([target, value]) => `<tr><td>${target.toUpperCase()}</td><td>${value.actualStartAt}</td><td>${value.startSkewMs ?? "-"}</td><td>${value.completed}/${value.requested}</td><td>${value.failures}</td><td>${value.successfulOperationsPerSecond ?? "-"}</td><td>${value.latencyMs?.p95 ?? "-"}</td><td>${value.latencyMs?.p99 ?? "-"}</td><td>${value.writeUnits ?? "-"}</td></tr>`).join("");
   const preloadSection = preloadRows ? `<h2>Canonical preload performance</h2><table><thead><tr><th>Target</th><th>Actual start UTC</th><th>Start skew ms</th><th>Completed</th><th>Failures</th><th>Successful ops/s</th><th>P95 ms</th><th>P99 ms</th><th>Write units</th></tr></thead><tbody>${preloadRows}</tbody></table>` : "";
   const rows = state.sessionResults.flatMap(session => Object.entries(session.summaries).map(([target, value]) => `<tr><td>${session.id}</td><td>${target.toUpperCase()}</td><td>${value.actualStartAt}</td><td>${value.startSkewMs}</td><td>${value.completed}/${value.scheduled}</td><td>${value.successfulServiceLatencyMs?.p95 ?? "-"}</td><td>${value.successfulServiceLatencyMs?.p99 ?? "-"}</td><td>${value.successfulServiceLatencyMs?.max ?? "-"}</td></tr>`)).join("");
@@ -294,11 +294,17 @@ function packageRun(state) {
   fs.writeFileSync(path.join(state.output, "index.html"), html.replace("<table><thead><tr><th>Session</th>", `${preloadSection}<h2>Workload sessions</h2><table><thead><tr><th>Session</th>`));
   fs.writeFileSync(path.join(state.output, "run-state.json"), `${JSON.stringify(visible(state), null, 2)}\n`);
   fs.writeFileSync(path.join(state.output, "pipeline-log.ndjson"), `${(state.logs || []).map(item => JSON.stringify(item)).join("\n")}\n`);
-  const files = allFiles(state.output).filter(file => !file.endsWith(".zip") && !file.endsWith("manifest-sha256.json") && path.basename(file) !== stateFileName);
-  const entries = files.map(file => ({ path: path.relative(state.output, file).replaceAll("\\", "/"), data: fs.readFileSync(file) }));
-  const manifest = { schemaVersion: 1, runId: state.id, generatedAt: new Date().toISOString(), entries: entries.map(item => ({ path: item.path, bytes: item.data.length, sha256: crypto.createHash("sha256").update(item.data).digest("hex") })) };
+  const archiveName = `${state.id}-benchmark-output.zip`;
+  const files = allFiles(state.output).filter(file => !file.endsWith(".zip") && !file.endsWith("manifest-sha256.json") && !path.basename(file).startsWith(`${archiveName}.tmp-`) && path.basename(file) !== stateFileName);
+  const entries = [];
+  for (const file of files) {
+    const inspected = await inspectFile(file);
+    entries.push({ path: path.relative(state.output, file).replaceAll("\\", "/"), sourcePath: file, ...inspected });
+  }
+  const manifest = { schemaVersion: 1, runId: state.id, generatedAt: new Date().toISOString(), entries: entries.map(item => ({ path: item.path, bytes: item.bytes, sha256: item.sha256 })) };
   const manifestData = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`); fs.writeFileSync(path.join(state.output, "manifest-sha256.json"), manifestData);
-  state.archiveFile = path.join(state.output, `${state.id}-benchmark-output.zip`); fs.writeFileSync(state.archiveFile, createZip([...entries.map(item => ({ name: item.path, data: item.data })), { name: "manifest-sha256.json", data: manifestData }]));
+  state.archiveFile = path.join(state.output, archiveName);
+  await createZipFile(state.archiveFile, [...entries.map(item => ({ name: item.path, sourcePath: item.sourcePath, bytes: item.bytes, crc32: item.crc32 })), { name: "manifest-sha256.json", data: manifestData }]);
 }
 
 export class CloudAcceptanceRuns {
@@ -363,6 +369,25 @@ export class CloudAcceptanceRuns {
     appendLog(state, { stage: name, message: "Stage started" }); this.persist(state);
     try { const result = await task(); stage.status = "complete"; stage.completedAt = new Date().toISOString(); stage.detail = typeof result === "string" ? result : result ? JSON.stringify(result).slice(0, 600) : "Passed"; appendLog(state, { level: "success", stage: name, message: stage.detail }); this.persist(state); return result; }
     catch (error) { stage.status = "failed"; stage.completedAt = new Date().toISOString(); stage.detail = error.message; appendLog(state, { level: "error", stage: name, message: error.message }); this.persist(state); throw error; }
+  }
+  async completePackage(state) {
+    const stage = state.stages.find(item => item.name === "package-generation");
+    stage.status = "running"; stage.startedAt = new Date().toISOString(); stage.completedAt = null; stage.detail = null;
+    appendLog(state, { stage: "package-generation", message: "Stage started" }); this.persist(state);
+    const completedAt = new Date().toISOString(), projected = structuredClone(state);
+    projected.status = "complete"; projected.completedAt = completedAt;
+    projected.archiveFile = path.join(projected.output, `${projected.id}-benchmark-output.zip`);
+    const projectedStage = projected.stages.find(item => item.name === "package-generation");
+    projectedStage.status = "complete"; projectedStage.completedAt = completedAt; projectedStage.detail = "Benchmark package generated";
+    appendLog(projected, { level: "success", stage: "package-generation", message: projectedStage.detail });
+    appendLog(projected, { level: "success", message: "Benchmark pipeline completed" });
+    try { await packageRun(projected); }
+    catch (error) {
+      stage.status = "failed"; stage.completedAt = new Date().toISOString(); stage.detail = error.message;
+      appendLog(state, { level: "error", stage: "package-generation", message: error.message }); this.persist(state); throw error;
+    }
+    state.status = projected.status; state.completedAt = projected.completedAt; state.archiveFile = projected.archiveFile; state.stages = projected.stages; state.logs = projected.logs;
+    this.persist(state);
   }
   async recoverInterruptedSession(state) {
     const current = state.currentSession;
@@ -448,8 +473,7 @@ export class CloudAcceptanceRuns {
       });
       await this.step(state, "evidence-collection", () => path.join(state.output, "evidence", "run"));
       await this.step(state, "acceptance-validation", () => { let maximumStartSkewMs = 0, serviceFailures = 0; for (const session of state.sessionResults) { const values = Object.values(session.summaries); if (values.some(value => !value.harnessPassed || value.accounted !== value.scheduled)) throw new Error(`${session.id} failed workload accounting acceptance`); if (new Set(values.map(value => value.configSha256)).size !== 1 || new Set(values.map(value => value.scheduledStartAt)).size !== 1) throw new Error(`${session.id} configuration hash or T0 differs across targets`); maximumStartSkewMs = Math.max(maximumStartSkewMs, ...values.map(value => Math.abs(value.startSkewMs))); serviceFailures += values.reduce((sum, value) => sum + Number(value.failed || 0), 0); } return { sessions: state.sessionResults.length, maximumStartSkewMs, serviceFailures, note: serviceFailures ? "Service errors are preserved as benchmark results and do not invalidate complete accounting" : "No service errors" }; });
-      await this.step(state, "package-generation", () => packageRun(state));
-      state.status = "complete"; state.completedAt = new Date().toISOString(); appendLog(state, { level: "success", message: "Benchmark pipeline completed" }); packageRun(state); this.persist(state);
+      await this.completePackage(state);
     } catch (error) { const stopped = Boolean(state.stopRequestedAt); state.status = stopped ? "stopped" : "failed"; state.error = stopped ? null : error.message; state.completedAt = new Date().toISOString(); state.targetStatus = Object.fromEntries(Object.keys(state.targetStatus || {}).map(target => [target, state.targetStatus[target] === "completed" ? "completed" : stopped ? "stopped" : "failed"])); appendLog(state, { level: stopped ? "warning" : "error", message: stopped ? "Pipeline stopped by operator; resources and evidence were preserved" : `Pipeline stopped: ${error.message}` }); this.persist(state); }
   }
 }

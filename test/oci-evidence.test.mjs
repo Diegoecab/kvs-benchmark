@@ -12,8 +12,9 @@ test("OCI evidence sync uploads progress and the complete evidence tree", async 
   fs.mkdirSync(path.join(root, "nested"));
   fs.writeFileSync(path.join(root, "nested", "summary.json"), "{}\n");
   fs.writeFileSync(path.join(root, ".benchmark-complete"), "\n");
-  const uploads = [];
-  const client = { putObject: async request => { uploads.push(request.objectName); for await (const chunk of request.putObjectBody) void chunk; }, close() {} };
-  await syncEvidence({ directory: root, bucket: "evidence", prefix: "results/run/adb", marker: path.join(root, ".benchmark-complete"), createClient: async () => ({ client, namespace: "namespace" }) });
+  const uploads = []; let clients = 0;
+  const createClient = async () => { clients += 1; return { namespace: "namespace", client: { putObject: async request => { uploads.push(request.objectName); for await (const chunk of request.putObjectBody) void chunk; }, close() {} } }; };
+  await syncEvidence({ directory: root, bucket: "evidence", prefix: "results/run/adb", marker: path.join(root, ".benchmark-complete"), createClient });
   assert.deepEqual(uploads.sort(), ["results/run/adb/nested/summary.json", "results/run/adb/progress.json"]);
+  assert.equal(clients, 2, "final evidence must use a fresh Object Storage client after live polling");
 });
