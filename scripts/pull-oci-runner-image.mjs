@@ -19,7 +19,7 @@ const executeCommand = async (file, args, execOptions = {}) => {
   return stdout;
 };
 const safeImage = options.image.replaceAll("'", "");
-const script = `#!/usr/bin/env bash\nset -euo pipefail\nsudo -n podman pull '${safeImage}' >/dev/null\nsudo -n podman image exists '${safeImage}'\necho IMAGE_READY\n`;
+const script = `#!/usr/bin/env bash\nset -euo pipefail\nfor attempt in $(seq 1 90); do\n  if [ -f /var/lib/cloud/instance/kvs-benchmark-ready ] && sudo -n podman image exists '${safeImage}' >/dev/null 2>&1; then break; fi\n  sleep 10\ndone\ntest -f /var/lib/cloud/instance/kvs-benchmark-ready\nsudo -n podman pull '${safeImage}' >/dev/null\nsudo -n podman image exists '${safeImage}'\necho IMAGE_READY\n`;
 const results = await Promise.all(runners.map((instanceId, index) => executeOciRunCommand({
   executeCommand,
   profile: options.profile,
