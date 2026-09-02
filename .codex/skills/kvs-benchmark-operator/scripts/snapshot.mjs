@@ -48,10 +48,28 @@ const preload = Object.keys(state.targetStatus || {}).flatMap(target => {
   const value = JSON.parse(fs.readFileSync(file, "utf8"));
   return [{ target, completed: value.completed, requested: value.requested, failures: value.failures, successfulOperationsPerSecond: value.successfulOperationsPerSecond, p95Ms: value.latencyMs?.p95 ?? null, p99Ms: value.latencyMs?.p99 ?? null, startSkewMs: value.startSkewMs, writeUnits: value.writeUnits || null }];
 });
-const activeStage = state.stages?.find(stage => stage.status === "running")?.name || state.stages?.find(stage => stage.status === "failed")?.name || null;
+const stageInProgress = state.stages?.find(stage => stage.status === "running")?.name || null;
+const activeStage = ["queued", "running", "stopping"].includes(state.status) ? stageInProgress : null;
+const terminalStage = ["failed", "stopped"].includes(state.status) ? state.stages?.find(stage => stage.status === "failed")?.name || stageInProgress : null;
+const lastCompletedSession = state.sessionResults?.at(-1) || null;
+const lastCompleted = lastCompletedSession ? {
+  id: lastCompletedSession.id,
+  sharedStartAt: lastCompletedSession.sharedStartAt,
+  targets: Object.fromEntries(Object.entries(lastCompletedSession.summaries || {}).map(([target, value]) => [target, {
+    completed: value.completed,
+    scheduled: value.scheduled,
+    failed: value.failed,
+    schedulerDrops: value.schedulerDrops,
+    averageOperationsPerSecond: value.achievedOperationsPerSecond,
+    p95Ms: value.successfulServiceLatencyMs?.p95 ?? null,
+    p99Ms: value.successfulServiceLatencyMs?.p99 ?? null,
+    maxMs: value.successfulServiceLatencyMs?.max ?? null,
+    passed: Boolean(value.harnessPassed && value.failed === 0),
+  }]))
+} : null;
 const live = Object.fromEntries(Object.entries(state.targetMetrics || {}).map(([target, value]) => {
   const completed = value.completed ?? null, failed = value.failed ?? null, scheduled = value.scheduled ?? properties?.scheduledOperationsPerTarget ?? null;
   const accounted = completed == null ? null : completed + Number(failed || 0);
   return [target, { completed, scheduled, completionPercent: accounted != null && scheduled ? Number((accounted * 100 / scheduled).toFixed(2)) : null, failed, operationsPerSecond: value.operationsPerSecond ?? null, inFlight: value.inFlight ?? null, rollingP95Ms: value.rollingP95Ms ?? value.p95 ?? null, provisional: Boolean(value.provisional) }];
 }));
-console.log(JSON.stringify({ runId: state.id, status: state.status, activeStage, targets: Object.keys(state.targetStatus || {}), currentSession, sharedStartAt: state.sharedStartAt || null, completedSessions: state.sessionResults?.length || 0, totalSessions: state.spec?.matrix?.length || state.matrix?.length || 0, preload, live, lastEvent: state.logs?.at(-1) || null, error: state.error || null, downloadReady: Boolean(state.archiveFile) }, null, 2));
+console.log(JSON.stringify({ runId: state.id, status: state.status, activeStage, terminalStage, targets: Object.keys(state.targetStatus || {}), currentSession, sharedStartAt: state.sharedStartAt || null, completedSessions: state.sessionResults?.length || 0, totalSessions: state.spec?.matrix?.length || state.matrix?.length || 0, lastCompletedSession: lastCompleted, preload, live, lastEvent: state.logs?.at(-1) || null, error: state.error || null, downloadReady: Boolean(state.archiveFile) }, null, 2));
