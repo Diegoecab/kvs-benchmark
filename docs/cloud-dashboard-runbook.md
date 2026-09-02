@@ -15,7 +15,7 @@ This runbook prepares the existing-infrastructure dashboard path for AWS DynamoD
 1. Put both OCI runners in a Dynamic Group scoped to the benchmark compartment.
 2. Grant that Dynamic Group Run Command execution, `manage object-family`, and `manage nosql-family` in the benchmark compartment.
 3. Enable the Compute Instance Run Command plugin and TCP/443 egress on both private runners.
-4. Run `scripts/bootstrap-existing-adb-ddb-api.ps1` from the infrastructure repository to validate BYOL, rotate the transient ADMIN password, issue a time-limited API key, and set the dedicated table to 500/500.
+4. Run `node scripts/bootstrap-existing-adb-ddb-api.mjs --autonomous-database-id=<ocid> --table-name=<table> --profile=<oci-profile> --region=<region> --benchmark-repository=<path> --apply=true` from the infrastructure repository to validate BYOL, rotate the transient ADMIN password, issue a time-limited API key, and set the dedicated table to 500/500.
 5. Run `scripts/bootstrap-adb-runner-runtime.mjs` from this repository to transfer that key to the ADB runner using RSA-OAEP ciphertext. Confirm `ADB_RUNNER_RUNTIME_READY`.
 
 The dashboard preflight now downloads its pinned image digest when it is missing. No manual image pull is required.
