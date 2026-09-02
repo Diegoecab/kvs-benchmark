@@ -21,6 +21,7 @@ const terminalStatuses = new Set(["complete", "failed", "stopped"]);
 const safe = (value, pattern, label) => { if (!pattern.test(value || "")) throw new Error(`${label} is invalid`); return value; };
 const shellQuote = value => `'${String(value).replaceAll("'", `'"'"'`)}'`;
 const finalWorkloadEvidence = ["operations.ndjson", "telemetry.ndjson", "summary.json", "run-config.json", "clock.txt"];
+const finalPreloadEvidence = ["preload-operations.ndjson", "preload-summary.json", "clock.txt"];
 
 function runnerMetadata(value = {}) {
   const text = (item, pattern) => item && pattern.test(String(item)) ? String(item) : null;
@@ -75,7 +76,7 @@ function localShardScheduled(total, index, count) {
 
 function evidenceSources(spec, action, target) {
   const runners = targetRunners(spec, target);
-  if (!action.startsWith("run/") || runners.length <= 1) return [{ index: 0, key: sourceKey(0), runner: runners[0], relative: "" }];
+  if ((!action.startsWith("run/") && action !== "preload") || runners.length <= 1) return [{ index: 0, key: sourceKey(0), runner: runners[0], relative: "" }];
   return runners.map((runner, index) => ({ index, key: sourceKey(index), runner, relative: sourceRelative(spec, target, index) }));
 }
 
@@ -287,12 +288,14 @@ function remoteScript(spec, target, action, output, startAt, session = spec.matr
     ? `envargs=(--env-file /opt/kvs-dashboard/adb-api.runtime.env -e AWS_REGION=${spec.adbOciRegion})`
     : `envargs=(-e OCI_USE_INSTANCE_PRINCIPAL=true -e OCI_REGION=${spec.ndcsOciRegion} -e OCI_COMPARTMENT_ID=${spec.ndcsCompartment})`;
   if (action === "preflight") return `#!/usr/bin/env bash\nset -euo pipefail\ndate -u\nif ! sudo -n podman --version >/dev/null 2>&1; then echo "Runner prerequisite failed: the ocarun user requires passwordless access to Podman for the benchmark commands. Apply the documented sudoers policy or replace this runner." >&2; exit 20; fi\ntest -d /opt/kvs-dashboard\nsudo -n podman image exists ${shellQuote(spec.image)}\n${target === "adb" ? adbCredentialGuard(spec) : ""}\n`;
-  const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt} --shard-count=${runnerContext.count} --shard-index=${runnerContext.index}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : action === "preload" ? `preload --rate=${spec.preloadRate} --max-inflight=${spec.preloadMaxInflight}${startAt ? ` --start-at=${startAt}` : ""}` : `${action} --rate=20 --max-inflight=16`;
+  const isRun = action.startsWith("run/"), isPreload = action === "preload", distributed = isRun || isPreload;
+  const preloadRate = spec.preloadRate / runnerContext.count, preloadMaxInflight = Math.max(1, Math.ceil(spec.preloadMaxInflight / runnerContext.count));
+  const command = isRun ? `run --start-at=${startAt} --shard-count=${runnerContext.count} --shard-index=${runnerContext.index}` : action === "doctor" ? "doctor --clock-evidence=results/clock.txt" : isPreload ? `preload --rate=${preloadRate} --max-inflight=${preloadMaxInflight} --shard-count=${runnerContext.count} --shard-index=${runnerContext.index}${startAt ? ` --start-at=${startAt}` : ""}` : `${action} --rate=20 --max-inflight=16`;
   const outputArgument = action === "doctor" ? "results/doctor.json" : "results";
   const invocation = `sudo podman run --rm --network host "${'${envargs[@]}'}" -v "$root:/app/results:z" "$image" ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=${target} --table=${shellQuote(table)} --output=${outputArgument}`;
   const liveInvocation = `${liveMonitor("$root", localShardScheduled(session.scheduledOperationsPerTarget, runnerContext.index, runnerContext.count))}${invocation} &\nbenchmark_pid=$!\nwhile kill -0 "$benchmark_pid" 2>/dev/null; do write_progress; sleep 1; done\nset +e\nwait "$benchmark_pid"\ncode=$?\nset -e\nwrite_progress\nexit "$code"`;
   const guardedInvocation = action === "doctor" ? `set +e\n${invocation}\ncode=$?\nset -e\nif [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then exit "$code"; fi` : isRun ? liveInvocation : invocation;
-  const prefix = `results/${spec.runId}/${action}/${target}${isRun ? sourceRemote(spec, target, runnerContext.index) : ""}`;
+  const prefix = `results/${spec.runId}/${action}/${target}${distributed ? sourceRemote(spec, target, runnerContext.index) : ""}`;
   const sync = `sudo podman run --rm --network host -e OCI_REGION=${shellQuote(region)} -v "$root:/app/results:z" --entrypoint node "$image" src/cloud/oci-evidence.mjs --directory=/app/results --bucket=${shellQuote(bucket)} --prefix=${shellQuote(prefix)}`;
   if (isRun) return `#!/usr/bin/env bash\nset -euo pipefail\n${env}\nroot=${shellQuote(output)}\nimage=${shellQuote(spec.image)}\nsudo mkdir -p "$root" && sudo chmod 0777 "$root"\nsudo podman image exists "$image"\nsudo chronyc tracking > "$root/clock.txt"\n${sync} --marker=/app/results/.benchmark-complete --interval-ms=2000 &\nuploader_pid=$!\nset +e\n(\n${guardedInvocation}\n)\ncode=$?\nset -e\ntouch "$root/.benchmark-complete"\nset +e\nwait "$uploader_pid"\nupload_code=$?\nset -e\nif [ "$upload_code" -ne 0 ]; then\n  for retry in 1 2 3; do\n    if ${sync}; then upload_code=0; break; fi\n    sleep $((retry * 5))\n  done\nfi\nif [ "$upload_code" -ne 0 ]; then exit "$upload_code"; fi\nexit "$code"\n`;
   return `#!/usr/bin/env bash\nset -euo pipefail\n${env}\nroot=${shellQuote(output)}\nimage=${shellQuote(spec.image)}\nsudo mkdir -p "$root" && sudo chmod 0777 "$root"\nsudo podman image exists "$image"\nsudo chronyc tracking > "$root/clock.txt"\n${guardedInvocation}\n${sync}\n`;
@@ -307,8 +310,10 @@ function awsCommands(spec, action, output, startAt, session = spec.matrix[0], ru
     `/usr/local/bin/aws dynamodb describe-table --region ${spec.awsRegion} --table-name ${spec.awsTable} >/dev/null || { echo "AWS runner cannot reach ${spec.awsTable}; verify its instance-role and DynamoDB VPC endpoint policies include this table ARN" >&2; exit 21; }`,
     `printf '%s\n' "ready $(date -u +%FT%TZ) $(hostname)" | /usr/local/bin/aws s3 cp - s3://${spec.bucket}/results/${spec.runId}/preflight/aws${sourceRemote(spec, "aws", runnerContext.index)}/ready.txt --region ${spec.awsRegion} --only-show-errors || { echo "AWS runner cannot publish evidence under the permitted results/ prefix" >&2; exit 22; }`,
   ];
-  const isRun = action.startsWith("run/"), command = isRun ? `run --start-at=${startAt} --shard-count=${runnerContext.count} --shard-index=${runnerContext.index}` : action === "preload" ? `preload --rate=${spec.preloadRate} --max-inflight=${spec.preloadMaxInflight}${startAt ? ` --start-at=${startAt}` : ""}` : `${action} --rate=20 --max-inflight=16`;
-  const prefix = `results/${spec.runId}/${action}/aws${isRun ? sourceRemote(spec, "aws", runnerContext.index) : ""}`;
+  const isRun = action.startsWith("run/"), isPreload = action === "preload", distributed = isRun || isPreload;
+  const preloadRate = spec.preloadRate / runnerContext.count, preloadMaxInflight = Math.max(1, Math.ceil(spec.preloadMaxInflight / runnerContext.count));
+  const command = isRun ? `run --start-at=${startAt} --shard-count=${runnerContext.count} --shard-index=${runnerContext.index}` : isPreload ? `preload --rate=${preloadRate} --max-inflight=${preloadMaxInflight} --shard-count=${runnerContext.count} --shard-index=${runnerContext.index}${startAt ? ` --start-at=${startAt}` : ""}` : `${action} --rate=20 --max-inflight=16`;
+  const prefix = `results/${spec.runId}/${action}/aws${distributed ? sourceRemote(spec, "aws", runnerContext.index) : ""}`;
   const invocation = `podman run --rm --network host -e AWS_REGION=${spec.awsRegion} -v $root:/app/results:Z $image ${command} --config=configs/${session.configFile} ${runtimeArguments(spec, session, { workload: isRun })} --target=aws --table=${spec.awsTable} --output=results`;
   const runCommand = isRun ? `${liveMonitor("$root", localShardScheduled(session.scheduledOperationsPerTarget, runnerContext.index, runnerContext.count), `/usr/local/bin/aws s3 cp "$root/progress.json" s3://${spec.bucket}/${prefix}/progress.json --only-show-errors || true`)}${invocation} & benchmark_pid=$!; while kill -0 "$benchmark_pid" 2>/dev/null; do write_progress; sleep 1; done; set +e; wait "$benchmark_pid"; code=$?; set -e; write_progress; if [ "$code" -ne 0 ]; then exit "$code"; fi` : invocation;
   return ["set -eu", `root=${output}`, `image=${spec.image}`, "mkdir -p $root && chmod 0777 $root", "podman image exists $image", "chronyc tracking > $root/clock.txt", runCommand, `/usr/local/bin/aws s3 cp $root s3://${spec.bucket}/${prefix} --recursive --only-show-errors`];
@@ -387,11 +392,11 @@ export class CliCloudAdapter {
   }
   async stage(spec, action, startAt = null, session = spec.matrix[0]) {
     const base = `/opt/kvs-dashboard/${spec.runId}/${action}`;
-    const workload = action.startsWith("run/");
+    const workload = action.startsWith("run/"), distributed = workload || action === "preload";
     const tasks = spec.enabled.flatMap(target => {
-      const runners = targetRunners(spec, target), selected = workload ? runners : runners.slice(0, 1);
+      const runners = targetRunners(spec, target), selected = distributed ? runners : runners.slice(0, 1);
       return selected.map((runner, index) => {
-        const output = `${base}/${target}${workload ? sourceRemote(spec, target, index) : ""}`;
+        const output = `${base}/${target}${distributed ? sourceRemote(spec, target, index) : ""}`;
         return target === "aws" ? this.aws(spec, action, output, startAt, session, runner, index, runners.length) : this.oci(spec, target, action, output, startAt, session, runner, index, runners.length);
       });
     });
@@ -403,9 +408,10 @@ export class CliCloudAdapter {
     return local;
   }
   missingEvidence(spec, action, target) {
-    if (!action.startsWith("run/")) return [];
+    if (!action.startsWith("run/") && action !== "preload") return [];
     const destination = path.join(spec.localOutput, "evidence", action, target);
-    return evidenceSources(spec, action, target).flatMap(source => finalWorkloadEvidence
+    const required = action === "preload" ? finalPreloadEvidence : finalWorkloadEvidence;
+    return evidenceSources(spec, action, target).flatMap(source => required
       .filter(name => !fs.existsSync(path.join(destination, source.relative, name)) || fs.statSync(path.join(destination, source.relative, name)).size === 0)
       .map(name => ({ source: source.key, index: source.index, name })));
   }
@@ -416,7 +422,10 @@ export class CliCloudAdapter {
         await this.collectTarget(spec, action, target);
         const missing = this.missingEvidence(spec, action, target);
         if (missing.length) throw new Error(`Incomplete ${target} evidence for ${action}: ${missing.map(item => `${item.source}/${item.name}`).join(", ")}`);
-        if (targetRunners(spec, target).length > 1) await aggregateTargetEvidence(spec, action, target);
+        if (targetRunners(spec, target).length > 1) {
+          if (action === "preload") await aggregatePreloadEvidence(spec, target);
+          else if (action.startsWith("run/")) await aggregateTargetEvidence(spec, action, target);
+        }
         if (attempt > 1) this.commandEvent(spec, target, "evidence-collection-recovered", { action, attempt });
         return;
       } catch (error) {
@@ -434,7 +443,10 @@ export class CliCloudAdapter {
         await this.collectTarget(spec, action, target);
         const missing = this.missingEvidence(spec, action, target);
         if (missing.length) throw new Error(`Incomplete ${target} evidence after republish for ${action}: ${missing.map(item => `${item.source}/${item.name}`).join(", ")}`);
-        if (targetRunners(spec, target).length > 1) await aggregateTargetEvidence(spec, action, target);
+        if (targetRunners(spec, target).length > 1) {
+          if (action === "preload") await aggregatePreloadEvidence(spec, target);
+          else if (action.startsWith("run/")) await aggregateTargetEvidence(spec, action, target);
+        }
         this.commandEvent(spec, target, "evidence-republish-recovered", { action, attempt });
         return;
       } catch (error) {
@@ -568,6 +580,62 @@ function extremaIso(values, mode) {
   if (!dates.length) return null;
   const epoch = mode === "min" ? Math.min(...dates.map(value => value.getTime())) : Math.max(...dates.map(value => value.getTime()));
   return new Date(epoch).toISOString();
+}
+async function aggregatePreloadEvidence(spec, target) {
+  const action = "preload", directory = path.join(spec.localOutput, "evidence", action, target), sources = evidenceSources(spec, action, target);
+  if (sources.length <= 1) return null;
+  const sourceDirectories = sources.map(source => path.join(directory, source.relative));
+  const summaries = sourceDirectories.map(source => readJson(path.join(source, "preload-summary.json")));
+  if (new Set(summaries.map(value => value.configSha256)).size !== 1) throw new Error(`${target} preload generators used different configuration hashes`);
+  if (new Set(summaries.map(value => value.scheduledStartAt)).size !== 1) throw new Error(`${target} preload generators used different T0 values`);
+  const shardCounts = new Set(summaries.map(value => Number(value.shard?.count)));
+  const shardIndexes = new Set(summaries.map(value => Number(value.shard?.index)));
+  if (shardCounts.size !== 1 || !shardCounts.has(sources.length) || shardIndexes.size !== sources.length) throw new Error(`${target} preload shard evidence is incomplete or inconsistent`);
+  const successfulLatency = [], observedIndexes = new Set();
+  await mergeLineFiles(sourceDirectories.map(source => path.join(source, "preload-operations.ndjson")), path.join(directory, "preload-operations.ndjson"), line => {
+    const operation = JSON.parse(line), index = Number(operation.index), latency = Number(operation.latencyMs);
+    if (!Number.isInteger(index) || observedIndexes.has(index)) throw new Error(`${target} preload contains a missing or duplicate logical index`);
+    observedIndexes.add(index);
+    if (operation.error == null && Number.isFinite(latency)) successfulLatency.push(latency);
+  });
+  const errors = {};
+  for (const summary of summaries) for (const [name, count] of Object.entries(summary.errors || {})) errors[name] = (errors[name] || 0) + Number(count || 0);
+  const requested = sumBy(summaries, value => value.requested), completed = sumBy(summaries, value => value.completed), failures = sumBy(summaries, value => value.failures);
+  const actualStartAt = extremaIso(summaries.map(value => value.actualStartAt || value.startedAt), "min"), endedAt = extremaIso(summaries.map(value => value.endedAt), "max");
+  const durationMs = actualStartAt && endedAt ? Date.parse(endedAt) - Date.parse(actualStartAt) : Math.max(...summaries.map(value => Number(value.durationMs || 0)));
+  const durationSeconds = durationMs / 1000, first = summaries[0], logicalRequested = Number(first.logicalRequested ?? first.dataset?.keyCount ?? requested);
+  const sourceViews = sources.map((source, index) => ({ source: source.key, runner: source.runner, shard: summaries[index].shard, requested: summaries[index].requested, completed: summaries[index].completed, failures: summaries[index].failures, requestedOperationsPerSecond: summaries[index].requestedOperationsPerSecond, successfulOperationsPerSecond: summaries[index].successfulOperationsPerSecond, startSkewMs: summaries[index].startSkewMs }));
+  const summary = {
+    ...first,
+    schemaVersion: 2,
+    generatedAt: new Date().toISOString(),
+    actualStartAt,
+    startedAt: actualStartAt,
+    endedAt,
+    durationMs,
+    durationSeconds,
+    startSkewMs: Math.max(...summaries.map(value => Math.abs(Number(value.startSkewMs || 0)))),
+    requested,
+    logicalRequested,
+    completed,
+    failures,
+    requestedOperationsPerSecond: sumBy(summaries, value => value.requestedOperationsPerSecond),
+    attemptedOperationsPerSecond: durationSeconds > 0 ? requested / durationSeconds : null,
+    successfulOperationsPerSecond: durationSeconds > 0 ? completed / durationSeconds : null,
+    rate: sumBy(summaries, value => value.rate),
+    maxInflight: sumBy(summaries, value => value.maxInflight),
+    latencyMs: distribution(successfulLatency),
+    attempts: sumBy(summaries, value => value.attempts),
+    retryCount: sumBy(summaries, value => value.retryCount),
+    writeUnits: sumBy(summaries, value => value.writeUnits),
+    errors,
+    shard: null,
+    loadGenerators: { count: sources.length, sources: sourceViews },
+  };
+  summary.passed = summaries.every(value => value.passed === true) && failures === 0 && requested === logicalRequested && observedIndexes.size === logicalRequested;
+  fs.writeFileSync(path.join(directory, "preload-summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
+  fs.writeFileSync(path.join(directory, "clock.txt"), sources.map((source, index) => `[${source.key} ${source.runner.id}]\n${fs.readFileSync(path.join(sourceDirectories[index], "clock.txt"), "utf8").trim()}\n`).join("\n"));
+  return summary;
 }
 async function aggregateTargetEvidence(spec, action, target) {
   const directory = path.join(spec.localOutput, "evidence", action, target), sources = evidenceSources(spec, action, target);
@@ -840,4 +908,4 @@ export class CloudAcceptanceRuns {
   }
 }
 
-export { aggregateProgressSources, aggregateTargetEvidence, defaultImage, remoteScript, validate as validateCloudSpecification };
+export { aggregatePreloadEvidence, aggregateProgressSources, aggregateTargetEvidence, defaultImage, remoteScript, validate as validateCloudSpecification };

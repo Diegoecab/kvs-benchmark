@@ -31,7 +31,7 @@ const shardIndexOption = options["shard-index"] ?? process.env.KVS_SHARD_INDEX;
 const hasShardCount = shardCountOption != null;
 const hasShardIndex = shardIndexOption != null;
 if (hasShardCount !== hasShardIndex) throw new Error("--shard-count and --shard-index must be provided together");
-if ((hasShardCount || hasShardIndex) && !["run", "phase1"].includes(options.command)) throw new Error("--shard-count and --shard-index apply only to run and phase1");
+if ((hasShardCount || hasShardIndex) && !["run", "phase1", "preload"].includes(options.command)) throw new Error("--shard-count and --shard-index apply only to run, phase1, and preload");
 const shard = normalizeShardOptions({ shardCount: shardCountOption ?? 1, shardIndex: shardIndexOption ?? 0 });
 const configCommands = ["validate", "doctor", "run", "preload", "certify", "phase1"];
 if (configCommands.includes(options.command) && !options.config) throw new Error("--config is required");
@@ -65,7 +65,7 @@ if (options.command === "validate") {
         ? await runClosedLoop({ ...common, startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index })
         : await runOpenLoop({ ...common, startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index })
       : options.command === "preload"
-        ? await preloadDataset({ ...common, rate: Number(options.rate || 50), maxInflight: Number(options["max-inflight"] || 64), startAt: options["start-at"] })
+        ? await preloadDataset({ ...common, rate: Number(options.rate || 50), maxInflight: Number(options["max-inflight"] || 64), startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index })
         : await certifyDataset({ ...common, rate: Number(options.rate || 25), maxInflight: Number(options["max-inflight"] || 64) });
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
     if (summary.passed === false) process.exitCode = 2;

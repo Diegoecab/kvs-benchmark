@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { aggregateProgressSources, aggregateTargetEvidence, CliCloudAdapter, CloudAcceptanceRuns, remoteScript, validateCloudSpecification } from "../src/dashboard/cloud-acceptance.mjs";
+import { aggregatePreloadEvidence, aggregateProgressSources, aggregateTargetEvidence, CliCloudAdapter, CloudAcceptanceRuns, remoteScript, validateCloudSpecification } from "../src/dashboard/cloud-acceptance.mjs";
 import { writeStateAtomic } from "../src/dashboard/file-state.mjs";
 
 const hash = "a".repeat(64);
@@ -40,6 +40,30 @@ test("workload stage fans out to every target runner and passes deterministic sh
   assert.equal(calls.length, 9); assert.deepEqual(new Set(calls.map(call => call.count)), new Set([3])); assert.deepEqual(new Set(calls.map(call => call.index)), new Set([0, 1, 2])); assert.ok(calls.every(call => /sources\/source-0[1-3]$/.test(call.output.replaceAll("\\", "/"))));
   const script = remoteScript({ ...spec, image: input.imageDigest, adbTable: "table", adbBucket: "bucket", adbOciRegion: "us-ashburn-1", overrides: {} }, "adb", "run/smoke-r1", "/tmp/run", "2026-01-01T00:00:00.000Z", spec.matrix[0], { index: 1, count: 3 });
   assert.match(script, /--shard-count=3 --shard-index=1/); assert.match(script, /sources\/source-02/);
+
+  calls.length = 0;
+  spec.preloadRate = 300; spec.preloadMaxInflight = 90;
+  await adapter.stage(spec, "preload", "2026-01-01T00:00:00.000Z", spec.matrix[0]);
+  assert.equal(calls.length, 9); assert.ok(calls.every(call => /sources\/source-0[1-3]$/.test(call.output.replaceAll("\\", "/"))));
+  const preloadScript = remoteScript({ ...spec, image: input.imageDigest, adbTable: "table", adbBucket: "bucket", adbOciRegion: "us-ashburn-1", overrides: {} }, "adb", "preload", "/tmp/preload/sources/source-02", "2026-01-01T00:00:00.000Z", spec.matrix[0], { index: 1, count: 3 });
+  assert.match(preloadScript, /preload --rate=100 --max-inflight=30 --shard-count=3 --shard-index=1/);
+  assert.match(preloadScript, /preload\/adb\/sources\/source-02/);
+});
+
+test("distributed preload evidence is preserved and aggregated", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-preload-aggregate-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const target = "aws", runners = [0, 1].map(index => ({ id: `i-${index + 1}`, privateIp: `10.0.0.${index + 1}` }));
+  const spec = { runId: "preload-aggregate", localOutput: root, awsRunners: runners };
+  for (let index = 0; index < 2; index += 1) {
+    const directory = path.join(root, "evidence", "preload", target, "sources", `source-0${index + 1}`); fs.mkdirSync(directory, { recursive: true });
+    const operations = [index, index + 2].map(item => JSON.stringify({ index: item, latencyMs: item + 1, writeUnits: 1, attempts: 1, error: null })).join("\n");
+    fs.writeFileSync(path.join(directory, "preload-operations.ndjson"), `${operations}\n`);
+    fs.writeFileSync(path.join(directory, "clock.txt"), `clock ${index}\n`);
+    fs.writeFileSync(path.join(directory, "preload-summary.json"), JSON.stringify({ target, configSha256: hash, scheduledStartAt: "2026-01-01T00:00:00.000Z", actualStartAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T00:00:01.000Z", durationMs: 1000, startSkewMs: index, requested: 2, logicalRequested: 4, completed: 2, failures: 0, passed: true, shard: { count: 2, index }, dataset: { keyCount: 4 }, requestedOperationsPerSecond: 2, rate: 2, maxInflight: 1, attempts: 2, retryCount: 0, writeUnits: 2, errors: {} }));
+  }
+  const summary = await aggregatePreloadEvidence(spec, target);
+  assert.equal(summary.requested, 4); assert.equal(summary.completed, 4); assert.equal(summary.loadGenerators.count, 2); assert.equal(summary.passed, true); assert.equal(summary.latencyMs.samples, 4);
+  assert.ok(fs.existsSync(path.join(root, "evidence", "preload", target, "sources", "source-01", "preload-summary.json")));
 });
 
 test("per-runner evidence is preserved and aggregated into one target result", async t => {

@@ -27,3 +27,18 @@ test("preload captures synchronized timing, throughput, latency, attempts, and u
   assert.ok(Object.hasOwn(summary.latencyMs, "p90"));
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, "preload-summary.json"), "utf8")), summary);
 });
+
+test("preload shards cover the canonical dataset exactly once", async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-preload-shards-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = { name: "preload-shards", dataset: { keyCount: 10, payloadBytes: 8, partitionBuckets: 3 } };
+  const written = [];
+  for (let shardIndex = 0; shardIndex < 3; shardIndex += 1) {
+    const provider = { write: async key => { written.push(`${key.pk}/${key.sk}`); return { writeUnits: 1, attempts: 1 }; } };
+    const summary = await preloadDataset({ config, configSha256: "d".repeat(64), provider, target: "aws", table: "table", output: path.join(root, `source-${shardIndex}`), rate: 10_000, maxInflight: 4, shardCount: 3, shardIndex });
+    assert.deepEqual(summary.shard, { count: 3, index: shardIndex });
+    assert.equal(summary.logicalRequested, 10);
+  }
+  assert.equal(written.length, 10);
+  assert.equal(new Set(written).size, 10);
+});
