@@ -52,6 +52,8 @@ test("cloud adapter source remains platform-neutral", () => {
   assert.doesNotMatch(source, /AWS_REGION=us-ashburn-1/);
   assert.match(source, /AWS_REGION=\$\{spec\.adbOciRegion\}/);
   assert.match(source, /podman pull/);
+  assert.match(source, /awk '\/\^\\\\\{\.\*\\\\\}\$\//);
+  assert.doesNotMatch(source, /completed=\$\(grep -c/);
 });
 
 test("cloud acceptance can run a single enabled target without requiring OCI settings", async t => {
