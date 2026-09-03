@@ -42,3 +42,25 @@ test("preload shards cover the canonical dataset exactly once", async t => {
   assert.equal(written.length, 10);
   assert.equal(new Set(written).size, 10);
 });
+
+test("preload retries transient throttling without changing measured workload attempts", async t => {
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-preload-retry-"));
+  t.after(() => fs.rmSync(output, { recursive: true, force: true }));
+  const config = { name: "preload-retry", dataset: { keyCount: 3, payloadBytes: 8, partitionBuckets: 2 } };
+  const calls = new Map();
+  const provider = { write: async key => {
+    const count = (calls.get(key.sk) || 0) + 1;
+    calls.set(key.sk, count);
+    if (count === 1) throw Object.assign(new SyntaxError("HTML rate-limit response"), { $metadata: { httpStatusCode: 429, attempts: 1 } });
+    return { writeUnits: 1, attempts: 1 };
+  } };
+  const summary = await preloadDataset({ config, configSha256: "e".repeat(64), provider, target: "adb", table: "table", output, rate: 10_000, maxInflight: 3, maxWriteAttempts: 3, retryDelayMs: 1 });
+  assert.equal(summary.passed, true);
+  assert.equal(summary.completed, 3);
+  assert.equal(summary.failures, 0);
+  assert.equal(summary.attempts, 6);
+  assert.equal(summary.retryCount, 3);
+  assert.equal(summary.maxWriteAttempts, 3);
+  const operations = fs.readFileSync(path.join(output, "preload-operations.ndjson"), "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.ok(operations.every(operation => operation.attempts === 2 && operation.transientErrors[0].error.httpStatusCode === 429));
+});

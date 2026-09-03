@@ -65,7 +65,7 @@ if (options.command === "validate") {
         ? await runClosedLoop({ ...common, startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index })
         : await runOpenLoop({ ...common, startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index })
       : options.command === "preload"
-        ? await preloadDataset({ ...common, rate: Number(options.rate || 50), maxInflight: Number(options["max-inflight"] || 64), startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index })
+        ? await preloadDataset({ ...common, rate: Number(options.rate || 50), maxInflight: Number(options["max-inflight"] || 64), maxWriteAttempts: Number(options["max-write-attempts"] || 1), retryDelayMs: Number(options["retry-delay-ms"] || 250), startAt: options["start-at"], shardCount: shard.count, shardIndex: shard.index })
         : await certifyDataset({ ...common, rate: Number(options.rate || 25), maxInflight: Number(options["max-inflight"] || 64) });
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
     if (summary.passed === false) process.exitCode = 2;

@@ -41,13 +41,13 @@ The current five-minute matrix and its capacity-covered balanced phase are defin
 The table must already exist and be dedicated to the benchmark. Preload writes exactly 10,000 canonical rows by default; it does not create or alter table infrastructure.
 
 ```bash
-node src/cli.mjs preload --config=configs/x1-read-open-loop.json --target=aws --table=TABLE --output=results/preload/aws --rate=50 --max-inflight=64
+node src/cli.mjs preload --config=configs/x1-read-open-loop.json --target=aws --table=TABLE --output=results/preload/aws --rate=50 --max-inflight=64 --max-write-attempts=5 --retry-delay-ms=250
 node src/cli.mjs certify --config=configs/x1-read-open-loop.json --target=aws --table=TABLE --output=results/audit/aws --rate=25 --max-inflight=64
 ```
 
 Run the same commands for `adb` and `ndcs`. Certification always forces strong/absolute reads, even when the benchmark profile is eventual. The audit emits `audit-operations.ndjson` and `dataset-certificate.json`. The three `expectedSha256` and `observedSha256` values must match before a synchronized benchmark is accepted.
 
-Choose preload/audit rates below the table's effective capacity. Increasing concurrency does not override provisioned throughput and can create avoidable throttling.
+Choose preload/audit rates below the table's effective capacity. Increasing concurrency does not override provisioned throughput and can create avoidable throttling. Preload can retry HTTP 429/5xx responses with bounded exponential backoff; workload attempts remain controlled by the benchmark profile.
 
 ## Fast prerequisite path
 

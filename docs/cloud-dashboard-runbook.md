@@ -33,7 +33,7 @@ The promoted VM image must already contain the pinned container digest. Dashboar
 3. Select the AWS runner/table/evidence bucket and the independent ADB and NoSQL profile, compartment, runners, tables, and evidence bucket.
 4. Probe ADB tables and confirm the selected database ID matches the protected runner endpoint.
 5. Select the four `dallas-1000-*` profiles and set three repetitions for each.
-6. Enable **Measure and compare preload performance**, set 400 offered writes/s and 128 maximum in-flight writes. The dashboard assigns one shared preload T0 and adds elapsed time, achieved throughput, latency percentiles, failures, retries, write units, start skew, and operation evidence to the package.
+6. Enable **Measure and compare preload performance** and set the aggregate offered writes/s, maximum in-flight writes, transient-error attempts, and retry base delay. The dashboard assigns one shared preload T0 and adds elapsed time, achieved throughput, latency percentiles, failures, retries, write units, start skew, and operation evidence to the package. Preload retries cover only HTTP 429/5xx responses and do not alter the measured workload's retry policy.
 7. Leave T0 blank to use the OCI-safe automatic value of 900 seconds. Run Command delivery in this environment was observed above six minutes; lowering T0 can invalidate synchronized-start fairness.
 8. Approve canonical preload writes, review the immutable matrix, and start the cloud benchmark.
 9. Do not start another run while any provider command from the previous run remains `ACCEPTED` or `IN_PROGRESS`.
