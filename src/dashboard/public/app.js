@@ -21,9 +21,12 @@ let terminalPaused = false;
 let runHistory = [];
 let runHistoryPending = false;
 let runHistoryPage = 1;
+let activeHistoryRunId = null;
 const runHistoryPageSize = 5;
 let stageBrowserRunId = null;
 let selectedStageKey = null;
+let stageBrowserRenderSignature = null;
+let benchmarkDefinitionSignature = null;
 let stageChartSession = null;
 let stageChartResult = null;
 const selectedTargets = new Set();
@@ -165,6 +168,7 @@ const targetStatusView = status => ({
 function compactResourceId(item) { const value = String(item || "-"); return value.length > 30 ? `${value.slice(0, 14)}...${value.slice(-10)}` : value; }
 function localDateTime(item) { return item ? new Date(item).toLocaleString([], { dateStyle: "medium", timeStyle: "medium" }) : "Pending"; }
 function durationLabel(start, end = new Date().toISOString()) { const milliseconds = Date.parse(end) - Date.parse(start); if (!Number.isFinite(milliseconds) || milliseconds < 0) return "-"; const seconds = Math.round(milliseconds / 1000); return seconds >= 3600 ? `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m` : seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`; }
+function secondsLabel(seconds) { const value = Math.max(0, Number(seconds) || 0); return value >= 3600 ? `${Math.floor(value / 3600)}h ${Math.floor(value % 3600 / 60)}m` : value >= 60 ? `${Math.floor(value / 60)}m ${value % 60}s` : `${value}s`; }
 function renderRunOverview(run) {
   const view = $("run-overview"), cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance";
   if (!cloud) { view.classList.add("hidden"); view.innerHTML = ""; return; }
@@ -179,6 +183,22 @@ function renderRunOverview(run) {
   }).join("");
   view.classList.remove("hidden");
   view.innerHTML = `<div class="run-overview-heading"><div><p class="eyebrow">ACTIVE CLOUD RUN</p><h4>${escapeHtml(runStageLabel(stage?.name))}</h4><p>${escapeHtml(run.id)} · started ${escapeHtml(localDateTime(run.startedAt))} · elapsed ${escapeHtml(durationLabel(run.startedAt))}</p></div><span class="run-history-state ${escapeHtml(run.status)}">${escapeHtml(run.status.toUpperCase())}</span></div><div class="target-overview-grid">${cards}</div>`;
+}
+function renderBenchmarkDefinition(run) {
+  const view = $("benchmark-definition"), matrix = run.matrix || [], cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance";
+  if (!cloud || !matrix.length) { view.classList.add("hidden"); view.innerHTML = ""; benchmarkDefinitionSignature = null; return; }
+  const signature = JSON.stringify([run.id, matrix, Object.keys(run.targetStatus || {}), run.loadGeneratorCount, run.preloadStartAt]);
+  if (signature === benchmarkDefinitionSignature) return;
+  const targets = Object.keys(run.targetStatus || {}), first = matrix[0], groups = [];
+  for (const session of matrix) { let group = groups.find(item => item.name === session.name); if (!group) { group = { name: session.name, sessions: [] }; groups.push(group); } group.sessions.push(session); }
+  const workloadSeconds = matrix.reduce((sum, item) => sum + Number(item.durationSeconds || 0), 0), operationsPerTarget = matrix.reduce((sum, item) => sum + Number(item.scheduledOperationsPerTarget || 0), 0);
+  const t0Detail = String((run.stages || []).find(item => item.name === "t0-scheduled")?.detail || ""), deliverySeconds = Number(t0Detail.match(/(\d+)s delivery window/)?.[1] || 0), minimumSeconds = workloadSeconds + deliverySeconds * matrix.length;
+  const workloadCards = groups.map(group => { const item = group.sessions[0], schedule = (item.loadSchedule || []).map(step => number(step.operationsPerSecond)).join(" → "), label = item.readPercent === 100 ? "Read scalability" : item.writePercent === 100 ? "Write scalability" : `Mixed ${item.readPercent}/${item.writePercent}`; return `<article class="definition-workload"><div><span>${escapeHtml(label)}</span><b>${number(item.readPercent)}% reads · ${number(item.writePercent)}% writes</b></div><p>${escapeHtml(schedule)} ops/s</p><small>${number(group.sessions.length)} repetitions · ${escapeHtml(secondsLabel(item.durationSeconds))} each · ${number(item.scheduledOperationsPerTarget)} ops/target</small></article>`; }).join("");
+  const facts = [["Targets", `<span class="definition-targets">${targets.map(target => `${providerMark(target)}${escapeHtml(runTargetLabel(target))}`).join(" ")}</span>`], ["Test design", `${number(groups.length)} workload types · ${number(matrix.length)} synchronized sessions`], ["Measured traffic", `${escapeHtml(secondsLabel(workloadSeconds))} · ${number(operationsPerTarget)} operations/target`], ["Minimum matrix time", `${escapeHtml(secondsLabel(minimumSeconds))} · includes ${escapeHtml(secondsLabel(deliverySeconds))} T0 delivery/session`], ["Canonical dataset", `${number(first.keyCount)} keys · ${number(first.payloadBytes)} B payload · ${number(first.logicalItemBytes)} B logical max`], ["Distributed load", `${number(run.loadGeneratorCount || first.loadGeneratorCount)} VMs/target · ${number((run.loadGeneratorCount || first.loadGeneratorCount || 1) * targets.length)} runners total`]];
+  const protocols = [`${first.consistency || "-"} consistency`, `${first.loadModel || "-"} · ${first.executionMode || "-"}`, `shared T0 per session`, `deterministic keys, operation mix and payload`, `${number(first.maxAttempts)} attempt/request · ${number(first.requestTimeoutMs)} ms timeout`, `measured preload + strong dataset certification`, `service failures retained as benchmark results`, `operation evidence + runner VM telemetry + final ZIP`];
+  view.classList.remove("hidden");
+  view.innerHTML = `<div class="definition-heading"><div><p class="eyebrow">BENCHMARK DEFINITION</p><h3 id="benchmark-definition-title">What this run measures</h3><p>Compare service success, sustained throughput, and tail latency as offered load increases, using the same deterministic operations and item payload on every target.</p></div><span class="definition-badge">COMPARABLE · REPRODUCIBLE</span></div><div class="definition-facts">${facts.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><b>${value}</b></div>`).join("")}</div><div class="definition-protocol">${protocols.map(item => `<span>${escapeHtml(item)}</span>`).join("")}</div><div class="definition-workloads-heading"><h4>Workload matrix</h4><p>Each card is repeated independently against every enabled target.</p></div><div class="definition-workloads">${workloadCards}</div><p class="definition-footnote">The minimum matrix time excludes runner validation, measured preload, dataset certification, evidence consolidation, acceptance checks, and package generation.</p>`;
+  benchmarkDefinitionSignature = signature;
 }
 function stageTechnicalDetail(stage) {
   if (!stage?.detail || stage.detail === "Passed") return "";
@@ -290,19 +310,44 @@ function renderStageBrowserDetail(run, key) {
   const content = stage.name === "dataset-preload" ? preloadStageDetail(run) : stage.name === "dataset-certification" ? certificationStageDetail(run) : stage.name === "resource-validation" ? inventoryStageDetail(run) : stage.name === "workload" ? workloadStageDetail(run) : stage.name === "dataset-hash-match" && run.certificates ? certificationStageDetail(run) : stage.name === "package-generation" && run.downloadUrl ? `<a class="button-link" href="${escapeHtml(run.downloadUrl)}">Download benchmark output (.zip)</a>` : stage.status === "running" ? '<p class="stage-empty">This stage is active. Its results will remain available here after it completes.</p>' : stage.status === "pending" ? '<p class="stage-empty">This stage has not started yet.</p>' : stageTechnicalDetail(stage);
   detail.innerHTML = `<div class="stage-detail-heading"><div><span class="target-state ${escapeHtml(stage.status)}">${escapeHtml(stage.status)}</span><h5>${escapeHtml(runStageLabel(stage.name))}</h5><p>${stage.startedAt ? `Started ${escapeHtml(localDateTime(stage.startedAt))}${stage.completedAt ? ` · completed in ${escapeHtml(durationLabel(stage.startedAt, stage.completedAt))}` : ` · elapsed ${escapeHtml(durationLabel(stage.startedAt))}`}` : "Waiting to start"}</p></div></div>${content}`;
 }
+function stageBrowserSignature(run, stages, sessions) {
+  const selectedSession = selectedStageKey?.startsWith("session:") ? sessions.find(item => item.id === selectedStageKey.slice(8)) : null;
+  const selectedResult = selectedSession ? (run.sessionResults || []).find(item => item.id === selectedSession.id) : null;
+  const selectedGate = selectedStageKey?.startsWith("gate:") ? stages.find(item => item.name === selectedStageKey.slice(5)) : null;
+  const liveRevision = selectedSession?.id === run.currentSession?.id ? Object.entries(run.targetMetrics || {}).map(([target, metric]) => [target, metric.at, metric.completed, metric.failed]) : null;
+  const finalizedRevision = selectedResult ? { summaries: selectedResult.summaries, stageSummaries: selectedResult.stageSummaries, runnerMetrics: selectedResult.runnerMetrics } : null;
+  return JSON.stringify({ run: run.id, selectedStageKey, stages: stages.map(item => [item.name, item.status, item.completedAt]), sessions: sessions.map(item => [item.id, sessionState(run, item)]), gate: selectedGate && [selectedGate.status, selectedGate.detail], liveRevision, finalizedRevision });
+}
+function selectStageWithoutReplacingNavigation(run, button) {
+  const anchorTop = button.getBoundingClientRect().top;
+  selectedStageKey = button.dataset.stageKey;
+  for (const item of document.querySelectorAll("[data-stage-key]")) { const selected = item.dataset.stageKey === selectedStageKey; item.classList.toggle("selected", selected); item.setAttribute("aria-selected", String(selected)); }
+  renderStageBrowserDetail(run, selectedStageKey);
+  const updatedButton = [...document.querySelectorAll("[data-stage-key]")].find(item => item.dataset.stageKey === selectedStageKey);
+  if (updatedButton) window.scrollBy(0, updatedButton.getBoundingClientRect().top - anchorTop);
+  stageBrowserRenderSignature = stageBrowserSignature(run, run.stages || [], run.matrix || []);
+}
 function renderStageBrowser(run) {
   const browser = $("stage-browser"), cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance";
   if (!cloud) { browser.classList.add("hidden"); return; }
   browser.classList.remove("hidden");
-  if (stageBrowserRunId !== run.id) { stageBrowserRunId = run.id; selectedStageKey = null; }
+  if (stageBrowserRunId !== run.id) { stageBrowserRunId = run.id; selectedStageKey = null; stageBrowserRenderSignature = null; }
   const stages = run.stages || [], sessions = run.matrix || [], activeStage = stages.find(item => item.status === "running"), activeSession = run.currentSession?.id;
   const keys = [...stages.map(item => `gate:${item.name}`), ...sessions.map(item => `session:${item.id}`)];
   if (!selectedStageKey || !keys.includes(selectedStageKey)) selectedStageKey = activeSession ? `session:${activeSession}` : activeStage ? `gate:${activeStage.name}` : `gate:${stages.filter(item => item.status === "complete").at(-1)?.name || stages[0]?.name}`;
+  const signature = stageBrowserSignature(run, stages, sessions);
+  if (signature === stageBrowserRenderSignature) return;
+  const previousAnchor = browser.querySelector(`[data-stage-key="${CSS.escape(selectedStageKey)}"]`), previousAnchorTop = previousAnchor?.getBoundingClientRect().top;
+  const previousScroll = [...browser.querySelectorAll(".stage-tab-group > div")].map(item => item.scrollLeft);
   const gateButtons = stages.map((stage, index) => `<button type="button" role="tab" aria-selected="${selectedStageKey === `gate:${stage.name}`}" class="stage-tab ${escapeHtml(stage.status)}${selectedStageKey === `gate:${stage.name}` ? " selected" : ""}" data-stage-key="gate:${escapeHtml(stage.name)}"><i>${stage.status === "complete" ? "✓" : stage.status === "failed" ? "!" : stage.status === "running" ? "●" : index + 1}</i><span>${escapeHtml(runStageLabel(stage.name))}</span></button>`).join("");
   const sessionButtons = sessions.map((session, index) => { const status = sessionState(run, session); return `<button type="button" role="tab" aria-selected="${selectedStageKey === `session:${session.id}`}" class="stage-tab session ${escapeHtml(status)}${selectedStageKey === `session:${session.id}` ? " selected" : ""}" data-stage-key="session:${escapeHtml(session.id)}"><i>${index + 1}</i><span>${escapeHtml(session.name || session.configName || session.id)}<small>rep ${number(session.repetition)}</small></span></button>`; }).join("");
   $("stage-browser-tabs").innerHTML = `<div class="stage-tab-group"><b>Pipeline gates</b><div>${gateButtons}</div></div><div class="stage-tab-group"><b>Workload sessions</b><div>${sessionButtons}</div></div>`;
-  for (const button of document.querySelectorAll("[data-stage-key]")) button.addEventListener("click", () => { selectedStageKey = button.dataset.stageKey; renderStageBrowser(run); });
+  [...browser.querySelectorAll(".stage-tab-group > div")].forEach((item, index) => { item.scrollLeft = previousScroll[index] || 0; });
+  for (const button of browser.querySelectorAll("[data-stage-key]")) button.addEventListener("click", () => selectStageWithoutReplacingNavigation(run, button));
   renderStageBrowserDetail(run, selectedStageKey);
+  const nextAnchor = browser.querySelector(`[data-stage-key="${CSS.escape(selectedStageKey)}"]`);
+  if (nextAnchor && previousAnchorTop != null) window.scrollBy(0, nextAnchor.getBoundingClientRect().top - previousAnchorTop);
+  stageBrowserRenderSignature = stageBrowserSignature(run, stages, sessions);
 }
 function elapsedLabel(run) {
   const start = Date.parse(run.startedAt || run.createdAt), end = Date.parse(run.completedAt || new Date().toISOString());
@@ -316,9 +361,9 @@ function filteredRunHistory() {
   if (status === "non-failed") return runHistory.filter(run => run.status !== "failed");
   return runHistory.filter(run => run.status === status);
 }
-function renderRunHistoryList({ preserveSelection = true } = {}) {
-  const select = $("run-history-select"), previous = preserveSelection ? select.value : "", runs = filteredRunHistory();
-  select.replaceChildren(...runs.map(run => new Option(`${run.id === runHistory.find(item => !terminalRunStatuses.has(item.status))?.id ? "LIVE · " : ""}${new Date(run.createdAt).toLocaleString()} · ${run.status.toUpperCase()} · ${run.id}`, run.id)));
+function renderRunHistoryList({ preserveSelection = true, preferredRunId = null } = {}) {
+  const select = $("run-history-select"), previous = preferredRunId || (preserveSelection ? select.value : ""), runs = filteredRunHistory();
+  select.replaceChildren(...runs.map(run => new Option(`${run.id === activeHistoryRunId ? "LIVE · " : ""}${new Date(run.createdAt).toLocaleString()} · ${run.status.toUpperCase()} · ${run.id}`, run.id)));
   if (previous && runs.some(run => run.id === previous)) select.value = previous;
   else if (runs.length) select.value = runs[0].id;
   else select.append(new Option("No runs match this filter", ""));
@@ -348,10 +393,15 @@ async function showHistoricalRun(id) {
   try {
     const response = await fetch(`/api/runs/${encodeURIComponent(id)}`, { cache: "no-store" }), run = await response.json();
     if (!response.ok) throw new Error(run.error || `Run lookup failed (${response.status})`);
-    const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", targets = cloud ? Object.keys(run.targetStatus || {}) : ["mock"], sessions = run.sessionResults || [];
+    const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", targets = cloud ? Object.keys(run.targetStatus || {}) : ["mock"], sessions = run.sessionResults || [], live = run.id === activeHistoryRunId && !terminalRunStatuses.has(run.status);
     const rows = sessions.flatMap(session => { const matrix = (run.matrix || []).find(item => item.id === session.id) || {}; return Object.entries(session.summaries || {}).map(([target, summary]) => `<tr><td>${escapeHtml(session.id)}</td><td>${providerMark(target)} ${escapeHtml(runTargetLabel(target))}</td><td>${number(summary.completed)} / ${number(summary.scheduled)}</td><td>${number(summary.failed)}</td><td>${number(summary.achievedOperationsPerSecond)} ops/s</td><td>${number(matrix.payloadBytes ?? summary.dataset?.payloadBytes)} B payload / ${number(matrix.logicalItemBytes ?? summary.dataset?.logicalItemBytes)} B logical max</td><td>${number(summary.successfulServiceLatencyMs?.p95)} ms</td><td>${number(summary.successfulServiceLatencyMs?.p99)} ms</td></tr>`); }).join("");
     const workloadNames = [...new Set((run.matrix || []).map(item => item.name || item.configName).filter(Boolean))];
     detail.innerHTML = `<div class="historical-heading"><div><p class="eyebrow">HISTORICAL · READ-ONLY</p><h4>${escapeHtml(run.id)}</h4><p>${escapeHtml(runKindLabel(run.kind))} · started ${escapeHtml(new Date(run.startedAt || run.createdAt).toLocaleString())} · ${escapeHtml(elapsedLabel(run))}</p></div><span class="run-history-state ${escapeHtml(run.status)}">${escapeHtml(run.status.toUpperCase())}</span></div><div class="historical-facts"><div><span>Targets</span><b>${targets.map(target => `${providerMark(target)} ${escapeHtml(runTargetLabel(target))}`).join(" &nbsp; ")}</b></div><div><span>Sessions</span><b>${number(sessions.length)} / ${number(run.matrix?.length || (run.summary ? 1 : 0))}</b></div><div><span>Workloads</span><b>${escapeHtml(workloadNames.join(", ") || "Local functional test")}</b></div><div><span>Evidence</span><b>${run.downloadUrl ? `<a href="${escapeHtml(run.downloadUrl)}">Download ZIP</a>` : "Package not available"}</b></div></div>${run.error ? `<div class="historical-error">${escapeHtml(run.error)}</div>` : ""}${rows ? `<div class="table-wrap historical-results"><table><thead><tr><th>Session</th><th>Target</th><th>Accounted</th><th>Failed</th><th>Throughput</th><th>Item size</th><th>P95</th><th>P99</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="run-history-empty">No finalized workload sessions are available for this run. Its pipeline state and error are preserved above.</p>`}`;
+    if (live) {
+      detail.querySelector(".eyebrow").textContent = "LIVE EXECUTION";
+      const empty = detail.querySelector(".run-history-empty");
+      if (empty) empty.textContent = "This run is active. Finalized workload sessions will appear here as they complete.";
+    }
   } catch (error) { detail.innerHTML = `<div class="historical-error">${escapeHtml(error.message)}</div>`; }
 }
 async function refreshRunHistory({ preserveSelection = true, quiet = false } = {}) {
@@ -366,7 +416,8 @@ async function refreshRunHistory({ preserveSelection = true, quiet = false } = {
       const candidates = [legacy.active, legacy.latest].filter(Boolean), unique = [...new Map(candidates.map(run => [run.id, run])).values()];
       payload = { items: unique.map(run => ({ id: run.id, kind: run.kind, mode: run.mode, status: run.status, createdAt: run.createdAt, startedAt: run.startedAt, completedAt: run.completedAt, targets: Object.keys(run.targetStatus || {}), sessionCount: run.matrix?.length || (run.summary ? 1 : 0), completedSessions: run.sessionResults?.length || (run.summary ? 1 : 0), workloadNames: [...new Set((run.matrix || []).map(item => item.name || item.configName).filter(Boolean))], currentSession: run.currentSession, error: run.error, downloadUrl: run.downloadUrl })) };
     } else if (!response.ok) throw new Error(payload.error || `Run history failed (${response.status})`);
-    runHistory = payload.items || []; renderRunHistoryList({ preserveSelection });
+    activeHistoryRunId = payload.activeRunId || null;
+    runHistory = payload.items || []; renderRunHistoryList({ preserveSelection, preferredRunId: activeHistoryRunId });
     if (payload.activeRunId) await syncServerActiveRun(payload.activeRunId);
     if ($("run-history-select").value) await showHistoricalRun($("run-history-select").value);
   } catch (error) { if (!quiet) $("run-history-list").innerHTML = `<div class="historical-error">${escapeHtml(error.message)}</div>`; }
@@ -716,7 +767,7 @@ function beginNewBenchmark() {
 function initializeWorkspaceShell() {
   const operations = $("operations-dashboard"), history = $("run-history-title")?.closest(".run-browser"), review = document.querySelector('.wizard-panel[data-step="5"]');
   if (history && review) {
-    const nodes = [history, history.nextElementSibling, $("run-overview"), $("smoke-status"), $("session-status"), $("pipeline"), $("stage-browser"), $("live-stats"), $("execution-log")?.closest(".execution-console"), $("live-chart-panel"), $("stop-run")?.closest(".actions"), $("smoke-detail")?.closest(".technical-details")];
+    const nodes = [history, $("benchmark-definition"), history.nextElementSibling, $("run-overview"), $("smoke-status"), $("session-status"), $("pipeline"), $("stage-browser"), $("live-stats"), $("execution-log")?.closest(".execution-console"), $("live-chart-panel"), $("stop-run")?.closest(".actions"), $("smoke-detail")?.closest(".technical-details")];
     for (const node of nodes) if (node && node !== operations && node.parentElement === review) operations.append(node);
     review.querySelector("hr")?.remove();
   }
@@ -842,7 +893,7 @@ function showSmoke(run) {
   const progress = run.progress || {}; const terminal = ["complete", "failed", "stopped"].includes(run.status); const latency = run.summary?.successfulServiceLatencyMs || {};
   setRunLock(!terminal);
   const cloud = run.kind === "cloud-benchmark" || run.kind === "cloud-acceptance", session = run.currentSession, targetMetrics = run.targetMetrics || {};
-  renderRunOverview(run); renderStageBrowser(run);
+  renderRunOverview(run); renderBenchmarkDefinition(run); renderStageBrowser(run);
   const accounting = cloud ? ` | ${session ? `session ${escapeHtml(session.id)} (${session.index}/${session.total}) | ` : ""}shared T0 ${escapeHtml(run.sharedStartAt || "pending")}` : ` | ${number(progress.accounted)} of ${number(progress.scheduled)} operations accounted`;
   $("smoke-status").className = `callout run-status ${run.status}${run.status === "failed" ? " error" : ""}`; $("smoke-status").innerHTML = `<b>${escapeHtml(run.status.toUpperCase())}</b> | run ${escapeHtml(run.id)}${accounting}.${run.error ? ` ${escapeHtml(run.error)}` : ""}`;
   const matrixSession = session ? (run.matrix || []).find(item => item.id === session.id) : null, profileMetadata = matrixSession ? bootstrap?.configs?.find(item => item.file === matrixSession.configFile) : null;

@@ -42,7 +42,9 @@ test("dashboard exposes a five-step wizard with contextual workload help", () =>
   assert.match(html, /id="execution-log"/); assert.match(html, /id="pause-log"/); assert.match(html, /id="copy-log"/); assert.match(html, /id="clear-log"/);
   assert.match(html, /id="session-status"/);
   assert.match(html, /id="run-overview"/); assert.match(app, /function renderRunOverview/); assert.match(app, /target-overview/);
+  assert.match(html, /id="benchmark-definition"/); assert.match(app, /function renderBenchmarkDefinition/); assert.match(app, /What this run measures/); assert.match(app, /Minimum matrix time/); assert.match(app, /Workload matrix/); assert.match(theme, /\.benchmark-definition/);
   assert.match(html, /id="stage-browser"/); assert.match(html, /id="stage-browser-tabs"/); assert.match(app, /function renderStageBrowser/); assert.match(app, /function preloadStageDetail/); assert.match(app, /function sessionStageDetail/);
+  assert.match(app, /function stageBrowserSignature/); assert.match(app, /function selectStageWithoutReplacingNavigation/); assert.match(app, /signature === stageBrowserRenderSignature/); assert.match(app, /window\.scrollBy/);
   assert.match(html, /<details class="technical-details">/); assert.doesNotMatch(html, /<pre id="smoke-detail"><\/pre>\s*<\/section>/);
   assert.match(html, /id="run-history-select"/); assert.match(html, /id="run-history-status"/); assert.match(html, /id="refresh-run-history"/);
   assert.match(html, /id="run-history-prev"/); assert.match(html, /id="run-history-next"/); assert.match(app, /runHistoryPageSize = 5/);
