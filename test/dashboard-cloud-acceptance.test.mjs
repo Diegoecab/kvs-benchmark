@@ -255,7 +255,12 @@ test("optional preload measurement synchronizes targets and packages comparable 
   const preload = staged.find(item => item.action === "preload");
   assert.match(preload.startAt, /^\d{4}-\d{2}-\d{2}T/); assert.equal(preload.rate, 400); assert.equal(preload.maxInflight, 128);
   assert.equal(current.preloadSummaries.aws.successfulOperationsPerSecond, 399.5);
-  assert.match(fs.readFileSync(path.join(root, started.id, "index.html"), "utf8"), /Canonical preload performance/);
+  const report = fs.readFileSync(path.join(root, started.id, "index.html"), "utf8");
+  assert.match(report, /EXECUTIVE SUMMARY/);
+  assert.match(report, /Benchmark resource inventory/);
+  assert.match(report, /Canonical preload performance/);
+  assert.match(report, /<th>Errors<\/th>/);
+  assert.match(report, /<th>Success rate<\/th>/);
 });
 
 test("dashboard attaches read-only to an externally controlled active run and refreshes its state", t => {

@@ -4,9 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import zlib from "node:zlib";
 import { createZip, createZipFile, inspectFile } from "../src/dashboard/artifact.mjs";
 
-function storedZipEntries(archive) {
+function zipEntries(archive) {
   let end = archive.length - 22;
   while (end >= 0 && archive.readUInt32LE(end) !== 0x06054b50) end -= 1;
   assert.ok(end >= 0, "end-of-central-directory record is present");
@@ -14,17 +15,21 @@ function storedZipEntries(archive) {
   let cursor = centralOffset;
   for (let index = 0; index < count; index += 1) {
     assert.equal(archive.readUInt32LE(cursor), 0x02014b50);
-    const size = archive.readUInt32LE(cursor + 24), nameLength = archive.readUInt16LE(cursor + 28), extraLength = archive.readUInt16LE(cursor + 30), commentLength = archive.readUInt16LE(cursor + 32), localOffset = archive.readUInt32LE(cursor + 42);
+    const method = archive.readUInt16LE(cursor + 10), compressedSize = archive.readUInt32LE(cursor + 20), size = archive.readUInt32LE(cursor + 24), nameLength = archive.readUInt16LE(cursor + 28), extraLength = archive.readUInt16LE(cursor + 30), commentLength = archive.readUInt16LE(cursor + 32), localOffset = archive.readUInt32LE(cursor + 42);
     const name = archive.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8");
     assert.equal(archive.readUInt32LE(localOffset), 0x04034b50);
     const localNameLength = archive.readUInt16LE(localOffset + 26), localExtraLength = archive.readUInt16LE(localOffset + 28), dataOffset = localOffset + 30 + localNameLength + localExtraLength;
-    result.set(name, archive.subarray(dataOffset, dataOffset + size));
+    const compressed = archive.subarray(dataOffset, dataOffset + compressedSize);
+    const data = method === 0 ? compressed : method === 8 ? zlib.inflateRawSync(compressed) : null;
+    assert.ok(data, `supported ZIP compression method for ${name}`);
+    assert.equal(data.length, size);
+    result.set(name, data);
     cursor += 46 + nameLength + extraLength + commentLength;
   }
   return result;
 }
 
-test("streaming ZIP stores file entries without using readFileSync", async t => {
+test("streaming ZIP compresses file entries without using readFileSync", async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kvs-streaming-zip-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const source = path.join(root, "operations.ndjson"), output = path.join(root, "package.zip");
   const block = Buffer.from(`${JSON.stringify({ operation: "read", payload: "x".repeat(1000) })}\n`);
@@ -47,16 +52,16 @@ test("streaming ZIP stores file entries without using readFileSync", async t => 
     ]);
   } finally { fs.readFileSync = originalReadFileSync; }
 
-  const entries = storedZipEntries(fs.readFileSync(output));
+  const entries = zipEntries(fs.readFileSync(output));
   assert.deepEqual([...entries.keys()], ["evidence/operations.ndjson", "manifest-sha256.json", "empty.txt"]);
   assert.equal(entries.get("evidence/operations.ndjson").length, inspected.bytes);
   assert.equal(entries.get("manifest-sha256.json").toString("utf8"), "{}\n");
   assert.equal(entries.get("empty.txt").length, 0);
   await createZipFile(output, [{ name: "replacement.txt", data: "replacement" }]);
-  assert.equal(storedZipEntries(fs.readFileSync(output)).get("replacement.txt").toString("utf8"), "replacement");
+  assert.equal(zipEntries(fs.readFileSync(output)).get("replacement.txt").toString("utf8"), "replacement");
 });
 
 test("existing in-memory createZip API remains available", () => {
-  const entries = storedZipEntries(createZip([{ name: "summary.json", data: '{"ok":true}\n' }]));
+  const entries = zipEntries(createZip([{ name: "summary.json", data: '{"ok":true}\n' }]));
   assert.equal(entries.get("summary.json").toString("utf8"), '{"ok":true}\n');
 });

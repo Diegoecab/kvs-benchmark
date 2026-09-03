@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
+import { createDeflateRaw } from "node:zlib";
 
 const escaped = value => String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 const fixed = value => value == null ? "-" : Number(value).toLocaleString("en-US", { maximumFractionDigits: 3 });
@@ -93,10 +95,26 @@ async function inspectZipEntry(entry) {
   return { bytes: inspected.bytes, crc32: inspected.crc32, data: null };
 }
 
+async function writeDeflated(handle, entry) {
+  const source = entry.data !== null ? Readable.from([entry.data]) : fs.createReadStream(entry.sourcePath);
+  let sourceBytes = 0, sourceCrc = 0xffffffff;
+  source.on("data", chunk => { sourceBytes += chunk.length; sourceCrc = updateCrc32(sourceCrc, chunk); });
+  const compressed = source.pipe(createDeflateRaw({ level: 6 }));
+  let compressedBytes = 0;
+  for await (const chunk of compressed) {
+    compressedBytes += chunk.length;
+    if (compressedBytes > 0xffffffff) throw new Error(`ZIP32 compressed entry is too large: ${entry.name}`);
+    await writeAll(handle, chunk);
+  }
+  sourceCrc = (sourceCrc ^ 0xffffffff) >>> 0;
+  if (sourceBytes !== entry.bytes || sourceCrc !== entry.crc32) throw new Error(`ZIP source changed while it was being packaged: ${entry.name}`);
+  return compressedBytes;
+}
+
 /**
- * Writes an uncompressed ZIP archive without buffering file contents in memory.
- * File entries use { name, sourcePath }; callers that already scanned a file may
- * also supply bytes and crc32 to avoid a second metadata pass.
+ * Writes a DEFLATE-compressed ZIP archive without buffering file contents in
+ * memory. Data descriptors allow each entry to be compressed directly to the
+ * archive while retaining standard ZIP32 compatibility.
  */
 export async function createZipFile(outputFile, entries) {
   if (entries.length > 0xffff) throw new Error("ZIP32 supports at most 65535 entries");
@@ -116,24 +134,17 @@ export async function createZipFile(outputFile, entries) {
     for (const entry of prepared) {
       if (entry.encodedName.length > 0xffff) throw new Error(`ZIP entry name is too long: ${entry.name}`);
       if (offset > 0xffffffff) throw new Error("ZIP32 archive exceeds the 4 GiB offset limit");
-      const stamp = dosTime(entry.mtime || new Date()), flags = 0x0800;
+      const stamp = dosTime(entry.mtime || new Date()), flags = 0x0808, method = 8;
       const local = Buffer.alloc(30);
-      local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(flags, 6); local.writeUInt16LE(0, 8); local.writeUInt16LE(stamp.time, 10); local.writeUInt16LE(stamp.date, 12); local.writeUInt32LE(entry.crc32, 14); local.writeUInt32LE(entry.bytes, 18); local.writeUInt32LE(entry.bytes, 22); local.writeUInt16LE(entry.encodedName.length, 26); local.writeUInt16LE(0, 28);
+      local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(flags, 6); local.writeUInt16LE(method, 8); local.writeUInt16LE(stamp.time, 10); local.writeUInt16LE(stamp.date, 12); local.writeUInt32LE(0, 14); local.writeUInt32LE(0, 18); local.writeUInt32LE(0, 22); local.writeUInt16LE(entry.encodedName.length, 26); local.writeUInt16LE(0, 28);
       await writeAll(handle, local); await writeAll(handle, entry.encodedName);
-      if (entry.data !== null) await writeAll(handle, entry.data);
-      else {
-        let streamedBytes = 0, streamedCrc = 0xffffffff;
-        for await (const chunk of fs.createReadStream(entry.sourcePath)) {
-          streamedBytes += chunk.length; streamedCrc = updateCrc32(streamedCrc, chunk); await writeAll(handle, chunk);
-        }
-        streamedCrc = (streamedCrc ^ 0xffffffff) >>> 0;
-        if (streamedBytes !== entry.bytes || streamedCrc !== entry.crc32) throw new Error(`ZIP source changed while it was being packaged: ${entry.name}`);
-      }
+      const compressedBytes = await writeDeflated(handle, entry);
+      const descriptor = Buffer.alloc(16); descriptor.writeUInt32LE(0x08074b50, 0); descriptor.writeUInt32LE(entry.crc32, 4); descriptor.writeUInt32LE(compressedBytes, 8); descriptor.writeUInt32LE(entry.bytes, 12); await writeAll(handle, descriptor);
 
       const central = Buffer.alloc(46);
-      central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(flags, 8); central.writeUInt16LE(0, 10); central.writeUInt16LE(stamp.time, 12); central.writeUInt16LE(stamp.date, 14); central.writeUInt32LE(entry.crc32, 16); central.writeUInt32LE(entry.bytes, 20); central.writeUInt32LE(entry.bytes, 24); central.writeUInt16LE(entry.encodedName.length, 28); central.writeUInt16LE(0, 30); central.writeUInt16LE(0, 32); central.writeUInt16LE(0, 34); central.writeUInt16LE(0, 36); central.writeUInt32LE(0, 38); central.writeUInt32LE(offset, 42);
+      central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(flags, 8); central.writeUInt16LE(method, 10); central.writeUInt16LE(stamp.time, 12); central.writeUInt16LE(stamp.date, 14); central.writeUInt32LE(entry.crc32, 16); central.writeUInt32LE(compressedBytes, 20); central.writeUInt32LE(entry.bytes, 24); central.writeUInt16LE(entry.encodedName.length, 28); central.writeUInt16LE(0, 30); central.writeUInt16LE(0, 32); central.writeUInt16LE(0, 34); central.writeUInt16LE(0, 36); central.writeUInt32LE(0, 38); central.writeUInt32LE(offset, 42);
       centrals.push(central, entry.encodedName);
-      offset += local.length + entry.encodedName.length + entry.bytes;
+      offset += local.length + entry.encodedName.length + compressedBytes + descriptor.length;
     }
     const centralOffset = offset;
     for (const value of centrals) { await writeAll(handle, value); offset += value.length; }
