@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "pitwall-100kb-mixed-70-30-100",
+  "dataset": { "keyCount": 10000, "payloadBytes": 100000, "partitionBuckets": 64, "seed": 20260903, "distribution": "uniform" },
+  "workload": { "readPercent": 70, "writePercent": 30, "writeMode": "idempotent", "consistency": "strong" },
+  "load": { "model": "open-loop", "executionMode": "concurrent", "schedule": [{ "seconds": 120, "operationsPerSecond": 100 }], "maxInflight": 512, "telemetryIntervalMs": 100 },
+  "client": { "maxConnections": 512, "requestTimeoutMs": 5000, "connectionTimeoutMs": 3000, "maxAttempts": 1 },
+  "capacity": {
+    "awsDynamodb": { "readCapacityUnits": 5000, "writeCapacityUnits": 6000 },
+    "adbDynamodbApi": { "readCapacityUnits": 5000, "writeCapacityUnits": 6000, "mappedTableEcpu": 50 },
+    "ociNosql": { "readUnits": 40000, "writeUnits": 6000, "storageGb": 10 }
+  },
+  "capacityCoverage": { "peakOperationsPerSecond": 100, "peakReadsPerSecond": 70, "peakWritesPerSecond": 30, "awsAndAdbRequired": { "read": 1750, "write": 2940 }, "ociNosqlRequired": { "read": 13720, "write": 2940 }, "plannedHeadroomPercent": 0 }
+}
