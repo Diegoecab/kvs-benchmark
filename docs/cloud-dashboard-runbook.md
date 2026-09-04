@@ -26,6 +26,12 @@ This runbook prepares the existing-infrastructure dashboard path for AWS DynamoD
 
 The promoted VM image must already contain the pinned container digest. Dashboard preflight validates it locally and never downloads from a registry; a missing digest blocks the run and requires a new image release.
 
+Before opening a multi-target run, audit each AWS runner from its own execution identity. This verifies the readiness marker, local image digest, clock, table path (including any DynamoDB Gateway endpoint policy), and evidence prefix:
+
+```text
+node scripts/check-aws-runner-readiness.mjs --profile=<aws-profile> --region=<region> --runner-ids=<instance-id> --image=<registry/image@sha256:digest> --table=<table> --bucket=<evidence-bucket>
+```
+
 ## Dashboard flow
 
 1. Start the local dashboard and select **Use existing infrastructure**.

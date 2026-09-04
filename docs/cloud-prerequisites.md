@@ -115,7 +115,7 @@ The ADB runner needs the same Run Command and evidence-bucket policies. DynamoDB
 
 The stable protected runtime files are `/opt/kvs-dashboard/adb-api.runtime.json` and `/opt/kvs-dashboard/adb-api.runtime.env`. They are created only during the separately approved encrypted ADB secret bootstrap and remain owned by `root` with mode `0600`. Podman consumes the env file directly as root so `sudo` cannot strip the ADB variables. Neither file may be embedded in cloud-init, Terraform state, dashboard input, Run Command plaintext, or evidence.
 
-ADB DynamoDB-compatible access keys have an expiration timestamp. A runner configured for unattended reuse also keeps the separately approved database renewal credential at `/opt/kvs-dashboard/.adb-admin-password`, owned by `root` with mode `0600`. Before any cloud run, preflight calculates the complete matrix plus T0 delivery budget and refuses to continue when the current key cannot cover that window. If the renewal credential is present, preflight replaces the key atomically with a table-scoped `READ_WRITE` key and reports only its expiration timestamp. Passwords, access IDs, and secret keys are never written to evidence or command output.
+ADB DynamoDB-compatible access keys have an expiration timestamp. A runner configured for unattended reuse also keeps the separately approved database renewal credential at `/opt/kvs-dashboard/.adb-admin-password`, owned by `root` with mode `0600`. Before any cloud run, preflight calculates every session duration plus every T0 delivery window and a two-hour preparation/collection margin. It refuses to continue when the current key cannot cover that window. If the renewal credential is present, preflight replaces the key atomically with a table-scoped `READ_WRITE` key whose requested lifetime is 360 minutes and reports only its expiration timestamp. Do not substitute a fixed 24-hour minimum or a multi-year renewal request: either can make a valid benchmark credential fail preflight. Passwords, access IDs, and secret keys are never written to evidence or command output.
 
 Use `scripts/bootstrap-adb-runner-runtime.mjs` to install them. The runner generates an ephemeral RSA private key locally; only its public key leaves the VM. Access-key values are sent back as RSA-OAEP ciphertext, the runtime files are written inside the rootful container mount, and the ephemeral private key is deleted after installation.
 
@@ -129,6 +129,8 @@ The EC2 instance must be an online Systems Manager managed node. Its instance ro
 - `s3:PutObject` for `arn:aws:s3:::<EVIDENCE_BUCKET>/results/*`.
 
 The operator identity needs at least `ec2:DescribeInstances`, `ssm:DescribeInstanceInformation`, `ssm:SendCommand`, `ssm:GetCommandInvocation`, `dynamodb:ListTables`, `dynamodb:DescribeTable`, `application-autoscaling:DescribeScalableTargets`, `s3:ListAllMyBuckets`, `s3:ListBucket`, and `s3:GetObject`, scoped to the benchmark resources whenever the API supports resource scoping. See the AWS [Run Command setup](https://docs.aws.amazon.com/systems-manager/latest/userguide/run-command-setting-up.html).
+
+If the subnet route table uses a shared DynamoDB Gateway endpoint, its endpoint policy is an independent authorization layer and must contain the temporary table ARN. Use the infrastructure repository's `Set-AwsDynamoDbEndpointTableAccess.ps1` helper before the run and remove the same ARN during cleanup. The helper previews by default, requires an exact approval string to apply, and preserves unrelated policy entries.
 
 ## Database and evidence resources
 
@@ -145,7 +147,7 @@ The suite validates the table and strongly certifies the canonical dataset befor
 
 1. `npm run check` passes locally.
 2. Dashboard discovery shows the intended profiles, compartments, runners, tables, capacity, and evidence buckets.
-3. AWS runner reports `SSM_ONLINE`; OCI runners report `RUN_COMMAND_RUNNING`, contain the readiness marker, and pass the `ocarun` image check.
+3. AWS runner reports `SSM_ONLINE`, contains the readiness marker, has the pinned image locally, can describe the exact DynamoDB table through any Gateway endpoint, and can write to the evidence prefix. OCI runners report `RUN_COMMAND_RUNNING`, contain the readiness marker, and pass the `ocarun` image check.
 4. A two-second `smoke.json` cloud run completes for each target independently.
 5. Dataset certificates match before running a multi-target session.
 6. The final immutable matrix preview shows the expected duration, operations/s, operations/minute, repetitions, consistency, mix, and concurrency model.

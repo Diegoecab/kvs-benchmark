@@ -130,7 +130,8 @@ test("cloud adapter source remains platform-neutral", () => {
   assert.doesNotMatch(source, /podman pull/, "preflight must validate the pinned local image without registry access");
   assert.match(source, /\.adb-admin-password/);
   assert.match(source, /KVS_REQUIRED_SECONDS/);
-  assert.match(source, /expiration_minutes:5256000/);
+  assert.match(source, /Math\.max\(3_600, workloadSeconds \+ 7_200\)/);
+  assert.match(source, /expiration_minutes:360/);
   assert.match(source, /Automatically renewed table-scoped benchmark credential/);
   assert.match(source, /awk '\/\^\\\\\{\.\*\\\\\}\$\//);
   assert.doesNotMatch(source, /completed=\$\(grep -c/);
