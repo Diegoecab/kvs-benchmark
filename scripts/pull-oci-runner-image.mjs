@@ -19,7 +19,7 @@ const executeCommand = async (file, args, execOptions = {}) => {
   return stdout;
 };
 const safeImage = options.image.replaceAll("'", "");
-const script = `#!/usr/bin/env bash\nset -euo pipefail\nfor attempt in $(seq 1 90); do\n  if [ -f /var/lib/cloud/instance/kvs-benchmark-ready ] && sudo -n podman image exists '${safeImage}' >/dev/null 2>&1; then break; fi\n  sleep 10\ndone\ntest -f /var/lib/cloud/instance/kvs-benchmark-ready\nsudo -n podman image exists '${safeImage}'\nsudo -n install -d -o root -g oracle-cloud-agent -m 0750 /opt/kvs-dashboard\ntest -d /opt/kvs-dashboard\necho IMAGE_READY\n`;
+const script = `#!/usr/bin/env bash\nset -euo pipefail\nfor attempt in $(seq 1 90); do\n  if [ -f /var/lib/cloud/instance/kvs-benchmark-ready ]; then break; fi\n  sleep 10\ndone\ntest -f /var/lib/cloud/instance/kvs-benchmark-ready\ntimeout 900 sudo -n podman pull '${safeImage}'\nsudo -n podman image exists '${safeImage}'\nsudo -n install -d -o root -g oracle-cloud-agent -m 0750 /opt/kvs-dashboard\ntest -d /opt/kvs-dashboard\necho IMAGE_READY\n`;
 const results = await Promise.all(runners.map((instanceId, index) => executeOciRunCommand({
   executeCommand,
   profile: options.profile,

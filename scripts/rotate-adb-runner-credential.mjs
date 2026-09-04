@@ -16,7 +16,7 @@ for (const required of ["profile", "region", "compartment-id", "runner-id", "dat
   if (!options[required]) throw new Error(`Missing --${required}`);
 }
 
-const image = options.image || "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:4fb423f7bbe2f90c36904855b3706c6c14fb4ce39b5bfe9731d88d5e5d16a32a";
+const image = options.image || "ghcr.io/diegoecab/kvs-benchmark-runner@sha256:afd67c17aeab0396bc9ac397e37585da59e726d7d51a8efa2a3f2a1b14ecd1a1";
 const controlDirectory = path.resolve(options["control-directory"] || ".run-command-control");
 const executeCommand = async (file, args, execOptions = {}) => {
   const { stdout } = await execFileAsync(file, args, { windowsHide: true, maxBuffer: 8 * 1024 * 1024, ...execOptions });
